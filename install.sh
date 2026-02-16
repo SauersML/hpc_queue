@@ -32,7 +32,6 @@ append_once() {
 
 echo "Installing q..."
 need_cmd git
-need_cmd python3
 
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -48,7 +47,81 @@ fi
 
 chmod +x "$INSTALL_DIR/q.py"
 mkdir -p "$BIN_DIR"
-ln -sf "$INSTALL_DIR/q.py" "$Q_LINK"
+cat >"$Q_LINK" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+Q_ROOT="$INSTALL_DIR"
+Q_PY="\$Q_ROOT/q.py"
+
+supports_python() {
+  local py="\$1"
+  "\$py" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
+pick_python() {
+  if [[ -n "\${Q_PYTHON:-}" ]] && command -v "\$Q_PYTHON" >/dev/null 2>&1; then
+    local qpy
+    qpy="\$(command -v "\$Q_PYTHON")"
+    if supports_python "\$qpy"; then
+      echo "\$qpy"
+      return 0
+    fi
+  fi
+
+  local candidates=(python3.12 python3.11 python3.10 python3)
+  local c
+  for c in "\${candidates[@]}"; do
+    if command -v "\$c" >/dev/null 2>&1; then
+      local p
+      p="\$(command -v "\$c")"
+      if supports_python "\$p"; then
+        echo "\$p"
+        return 0
+      fi
+    fi
+  done
+
+  if command -v module >/dev/null 2>&1; then
+    local mods=(
+      "python3/3.12.4_anaconda2024.06-1_libmamba"
+      "python3/3.10.9_anaconda2023.03_libmamba"
+      "python/3.10.9_anaconda2023.03_libmamba"
+    )
+    local m
+    for m in "\${mods[@]}"; do
+      if module load "\$m" >/dev/null 2>&1; then
+        for c in "\${candidates[@]}"; do
+          if command -v "\$c" >/dev/null 2>&1; then
+            local p2
+            p2="\$(command -v "\$c")"
+            if supports_python "\$p2"; then
+              echo "\$p2"
+              return 0
+            fi
+          fi
+        done
+      fi
+    done
+  fi
+  return 1
+}
+
+PYTHON_BIN="\$(pick_python || true)"
+if [[ -z "\$PYTHON_BIN" ]]; then
+  echo "q requires Python 3.10+." >&2
+  echo "Set one of these up, then re-run q:" >&2
+  echo "  module load python3/3.10.9_anaconda2023.03_libmamba" >&2
+  echo "or set Q_PYTHON to a Python 3.10+ executable." >&2
+  exit 1
+fi
+
+export PYTHON_BIN
+exec "\$PYTHON_BIN" "\$Q_PY" "\$@"
+EOF
 chmod +x "$Q_LINK"
 
 append_once "$HOME/.zshrc" "$PATH_LINE"
@@ -62,7 +135,7 @@ fi
 
 echo
 echo "q installed:"
-echo "  $Q_LINK -> $INSTALL_DIR/q.py"
+echo "  $Q_LINK (launcher for $INSTALL_DIR/q.py)"
 echo
 echo "Run:"
 echo "  q --help"

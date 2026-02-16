@@ -24,7 +24,8 @@ source "$ENV_FILE"
 set +a
 
 mkdir -p "$REPO_DIR/hpc-consumer"
-nohup python3 "$REPO_DIR/hpc-consumer/hpc_pull_consumer.py" >> "$LOG_FILE" 2>&1 &
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+nohup "$PYTHON_BIN" "$REPO_DIR/hpc-consumer/hpc_pull_consumer.py" >> "$LOG_FILE" 2>&1 &
 NEW_PID=$!
 echo "$NEW_PID" > "$PID_FILE"
 

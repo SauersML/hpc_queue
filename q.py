@@ -39,7 +39,9 @@ def require_env(name: str) -> str:
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
-    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+    env = os.environ.copy()
+    env.setdefault("PYTHON_BIN", sys.executable)
+    subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True, env=env)
 
 
 def upsert_env(path: Path, updates: dict[str, str]) -> None:
@@ -89,6 +91,7 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
         "CF_QUEUES_API_TOKEN": final_queue_token,
         "API_KEY": final_api_key,
         "WORKER_URL": worker_url,
+        "PYTHON_BIN": sys.executable,
     }
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
