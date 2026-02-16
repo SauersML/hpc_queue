@@ -25,6 +25,7 @@ DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
+DEFAULT_EXTERNAL_REPOS_ROOT = str(ROOT_DIR / "runtime" / "external-src")
 
 
 @dataclass
@@ -43,6 +44,13 @@ class Config:
     apptainer_bin: str = "apptainer"
     apptainer_bind: str = ""
     container_cmd: str = "python /app/run.py"
+    external_repos_root: str = DEFAULT_EXTERNAL_REPOS_ROOT
+    sync_external_repos: bool = True
+    external_repo_sync_strict: bool = True
+    gnomon_repo_url: str = "https://github.com/SauersML/gnomon.git"
+    gnomon_repo_ref: str = "main"
+    reagle_repo_url: str = "https://github.com/SauersML/reagle.git"
+    reagle_repo_ref: str = "main"
 
     @property
     def jobs_api_base(self) -> str:
@@ -84,7 +92,53 @@ def load_config() -> Config:
             "CONTAINER_CMD",
             "python /app/run.py",
         ),
+        external_repos_root=os.getenv("EXTERNAL_REPOS_ROOT", DEFAULT_EXTERNAL_REPOS_ROOT),
+        sync_external_repos=os.getenv("SYNC_EXTERNAL_REPOS", "1").lower() not in {"0", "false", "no"},
+        external_repo_sync_strict=os.getenv("EXTERNAL_REPO_SYNC_STRICT", "1").lower() not in {"0", "false", "no"},
+        gnomon_repo_url=os.getenv("GNOMON_REPO_URL", "https://github.com/SauersML/gnomon.git"),
+        gnomon_repo_ref=os.getenv("GNOMON_REPO_REF", "main"),
+        reagle_repo_url=os.getenv("REAGLE_REPO_URL", "https://github.com/SauersML/reagle.git"),
+        reagle_repo_ref=os.getenv("REAGLE_REPO_REF", "main"),
     )
+
+
+def _git(*args: str, cwd: Path | None = None) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(cwd) if cwd else None,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return (proc.stdout or "").strip()
+
+
+def sync_external_repo(name: str, url: str, ref: str, repos_root: Path) -> dict[str, str]:
+    repo_dir = repos_root / name
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    if (repo_dir / ".git").exists():
+        _git("-C", str(repo_dir), "remote", "set-url", "origin", url)
+        _git("-C", str(repo_dir), "fetch", "--depth", "1", "origin", ref)
+        _git("-C", str(repo_dir), "reset", "--hard", "FETCH_HEAD")
+        _git("-C", str(repo_dir), "clean", "-fdx")
+    else:
+        _git("clone", "--depth", "1", "--branch", ref, url, str(repo_dir))
+
+    sha = _git("-C", str(repo_dir), "rev-parse", "HEAD")
+    return {"name": name, "path": str(repo_dir.resolve()), "ref": ref, "sha": sha}
+
+
+def sync_external_repos(config: Config) -> list[dict[str, str]]:
+    repos_root = Path(config.external_repos_root)
+    repos = [
+        ("gnomon", config.gnomon_repo_url, config.gnomon_repo_ref),
+        ("reagle", config.reagle_repo_url, config.reagle_repo_ref),
+    ]
+    synced: list[dict[str, str]] = []
+    for name, url, ref in repos:
+        synced.append(sync_external_repo(name, url, ref, repos_root))
+    return synced
 
 
 def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +229,14 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         job_input = {}
     input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
     staged_files = stage_local_files(job_input, job_dir)
+    synced_repos: list[dict[str, str]] = []
+    if config.sync_external_repos:
+        try:
+            synced_repos = sync_external_repos(config)
+        except Exception as exc:
+            if config.external_repo_sync_strict:
+                raise RuntimeError(f"external repo sync failed: {exc}") from exc
+            print(f"warning: external repo sync failed; continuing with baked repos: {exc}")
 
     cmd = [
         config.apptainer_bin,
@@ -182,6 +244,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "--bind",
         f"{job_dir}:/work",
     ]
+    for repo in synced_repos:
+        cmd.extend(["--bind", f"{repo['path']}:/opt/src/{repo['name']}"])
     if config.apptainer_bind:
         cmd.extend(["--bind", config.apptainer_bind])
     cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])
@@ -207,6 +271,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "finished_at": finished,
         "returncode": proc.returncode,
         "staged_files": staged_files,
+        "synced_repos": synced_repos,
         "stdout_tail": tail_text(stdout_path),
         "stderr_tail": tail_text(stderr_path),
         "stdout_path": str(stdout_path.resolve()),
