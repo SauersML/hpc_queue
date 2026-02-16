@@ -119,7 +119,7 @@ def decode_message_body(body: Any) -> dict[str, Any]:
     raise ValueError(f"Unsupported body type: {type(body)}")
 
 
-def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple[str, int]:
+def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple[str, int, dict[str, Any]]:
     """Run compute directly on node using Apptainer."""
     job_id = str(job.get("job_id", "unknown"))
     job_dir = results_dir / job_id
@@ -193,7 +193,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
             encoding="utf-8",
         )
 
-    return str(output_path.resolve()), proc.returncode
+    return str(output_path.resolve()), proc.returncode, meta
 
 
 def ensure_image_fresh() -> None:
@@ -256,13 +256,20 @@ def process_once(config: Config) -> None:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
             ensure_image_fresh()
-            result_pointer, exit_code = run_compute(job, results_dir, config)
+            result_pointer, exit_code, meta = run_compute(job, results_dir, config)
             enqueue_result(
                 config=config,
                 job_id=job_id,
                 status="completed" if exit_code == 0 else "failed",
                 result_pointer=result_pointer,
-                extra={"event_type": "completed", "exit_code": exit_code},
+                extra={
+                    "event_type": "completed",
+                    "exit_code": exit_code,
+                    "stdout_tail": meta.get("stdout_tail", ""),
+                    "stderr_tail": meta.get("stderr_tail", ""),
+                    "started_at": meta.get("started_at"),
+                    "finished_at": meta.get("finished_at"),
+                },
             )
             acks.append({"lease_id": lease_id})
             print(f"completed job {job_id} -> {result_pointer}")

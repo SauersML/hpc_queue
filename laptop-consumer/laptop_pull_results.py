@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import request
 
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "laptop-consumer" / "results_cache.jsonl"
 
 
 @dataclass
@@ -87,6 +89,7 @@ def process_once(config: Config) -> None:
         return
 
     acks: list[dict[str, str]] = []
+    RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     for message in messages:
         lease_id = message.get("lease_id")
         if not lease_id:
@@ -99,7 +102,10 @@ def process_once(config: Config) -> None:
             except Exception:
                 pass
 
-        print(json.dumps(body, separators=(",", ":")))
+        body_json = json.dumps(body, separators=(",", ":"))
+        print(body_json)
+        with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
+            cache_fp.write(body_json + "\n")
         acks.append({"lease_id": lease_id})
 
     if acks:

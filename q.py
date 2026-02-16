@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 DEFAULT_APPTAINER_IMAGE = str(ROOT / "runtime" / "hpc-queue-runtime.sif")
+RESULTS_CACHE_PATH = ROOT / "laptop-consumer" / "results_cache.jsonl"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
 
@@ -173,7 +174,44 @@ def cmd_logs(job_id: str) -> None:
     stderr_path = job_dir / "stderr.log"
 
     if not job_dir.exists():
-        raise RuntimeError(f"No local results for job_id={job_id} at {job_dir}")
+        if RESULTS_CACHE_PATH.exists():
+            last_match: dict[str, Any] | None = None
+            for line in RESULTS_CACHE_PATH.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(event, dict) and str(event.get("job_id")) == job_id:
+                    last_match = event
+            if last_match is not None:
+                print(
+                    json.dumps(
+                        {
+                            "job_id": last_match.get("job_id"),
+                            "status": last_match.get("status"),
+                            "exit_code": last_match.get("exit_code"),
+                            "started_at": last_match.get("started_at"),
+                            "finished_at": last_match.get("finished_at"),
+                            "result_pointer": last_match.get("result_pointer"),
+                            "source": "results_cache",
+                        },
+                        indent=2,
+                    )
+                )
+                print("\n=== stdout ===")
+                print(str(last_match.get("stdout_tail", "")), end="")
+                print("\n=== stderr ===")
+                print(str(last_match.get("stderr_tail", "")), end="")
+                print()
+                return
+
+        raise RuntimeError(
+            f"No local results for job_id={job_id} at {job_dir}. "
+            f"Run `q results` first or check logs on HPC."
+        )
 
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
