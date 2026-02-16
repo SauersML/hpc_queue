@@ -15,7 +15,7 @@ from urllib import request
 
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
-RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "laptop-consumer" / "results_cache.jsonl"
+RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = Path(__file__).resolve().parent.parent / "local-results"
 
 

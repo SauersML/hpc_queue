@@ -13,7 +13,7 @@ __pycache__/
 *.local
 hpc-consumer/results/*
 !hpc-consumer/results/.gitkeep
-laptop-consumer/results_cache.jsonl
+local-consumer/results_cache.jsonl
 local-results/
 
 # Tooling

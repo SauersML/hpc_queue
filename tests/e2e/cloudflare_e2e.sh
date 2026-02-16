@@ -69,10 +69,10 @@ PYTHONUNBUFFERED=1 \
 CF_QUEUES_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
 CF_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
 CF_RESULTS_QUEUE_ID="$RESULTS_QUEUE_ID" \
-python laptop-consumer/laptop_pull_results.py > "$RUNTIME_DIR/laptop.log" 2>&1
-cat "$RUNTIME_DIR/laptop.log"
+python local-consumer/local_pull_results.py > "$RUNTIME_DIR/local.log" 2>&1
+cat "$RUNTIME_DIR/local.log"
 
-grep -q "$JOB_ID" "$RUNTIME_DIR/laptop.log"
+grep -q "$JOB_ID" "$RUNTIME_DIR/local.log"
 test -f "$RUNTIME_DIR/results/$JOB_ID/output.json"
 
 echo "cloudflare e2e ok for job $JOB_ID"

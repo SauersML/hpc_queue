@@ -16,7 +16,7 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
-RESULTS_CACHE_PATH = ROOT / "laptop-consumer" / "results_cache.jsonl"
+RESULTS_CACHE_PATH = ROOT / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = ROOT / "local-results"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
@@ -288,7 +288,7 @@ def cmd_worker() -> None:
 
 def cmd_results() -> None:
     require_env("CF_QUEUES_API_TOKEN")
-    run([sys.executable, str(ROOT / "laptop-consumer" / "laptop_pull_results.py")], cwd=ROOT)
+    run([sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py")], cwd=ROOT)
 
 
 def cmd_logs(job_id: str) -> None:
