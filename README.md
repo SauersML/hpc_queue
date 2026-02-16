@@ -26,6 +26,7 @@ Submit a command job:
 ```bash
 python3 /Users/user/hpc_queue/q.py submit ls
 python3 /Users/user/hpc_queue/q.py submit "python /work/script.py --iters 100"
+python3 /Users/user/hpc_queue/q.py python3 /work/thisfile.py
 ```
 
 Submit raw JSON input instead:

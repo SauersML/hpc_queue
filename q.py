@@ -222,7 +222,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    args = parser.parse_args()
+    known_commands = {"submit", "login", "start", "worker", "results", "status", "stop"}
+    argv = sys.argv[1:]
+    if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
+        # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
+        argv = ["submit", *argv]
+    args = parser.parse_args(argv)
 
     if args.command == "submit":
         cmd_submit(args.payload, args.json)
