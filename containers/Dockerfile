@@ -30,6 +30,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         make \
         pkg-config \
         procps \
+        r-base \
+        r-base-dev \
+        r-cran-mgcv \
         time \
         unzip \
         vim \
@@ -60,6 +63,10 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install -r /tmp/requirements.txt
+
+RUN python -m pip install --no-cache-dir rpy2 \
+    && Rscript -e "library(mgcv); cat('mgcv OK\\n')" \
+    && python -c "import rpy2.robjects as ro; from rpy2.robjects.packages import importr; importr('mgcv'); print('rpy2+mgcv OK')"
 
 RUN mkdir -p /gnomon /reagle
 
