@@ -44,10 +44,11 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && micromamba create -y -p "${MAMBA_TOOLS_ENV}" -c conda-forge -c bioconda plink2 gctb
 
 RUN set -eux; \
-    wget https://s3.amazonaws.com/plink2-assets/plink2_linux_avx2_20260110.zip -O /tmp/plink2.zip; \
+    wget -q https://s3.amazonaws.com/plink2-assets/plink2_linux_avx2_20260110.zip -O /tmp/plink2.zip \
+      || wget -q https://s3.amazonaws.com/plink2-assets/plink2_linux_x86_64_20260110.zip -O /tmp/plink2.zip; \
     rm -rf /tmp/plink2 && mkdir -p /tmp/plink2; \
     unzip -o /tmp/plink2.zip -d /tmp/plink2; \
-    install -m 0755 /tmp/plink2/plink2 /usr/local/bin/plink2; \
+    install -m 0755 /tmp/plink2/plink2 /usr/bin/plink2; \
     rm -rf /tmp/plink2 /tmp/plink2.zip
 
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
@@ -65,16 +66,16 @@ RUN mkdir -p /gnomon /reagle
 RUN set -eux; \
     command -v bcftools; \
     test -x /usr/bin/time; \
-    command -v plink2; \
+    test -x /usr/bin/plink2; \
     if command -v gctb >/dev/null 2>&1; then \
-      true; \
+      install -m 0755 "$(command -v gctb)" /usr/bin/gctb; \
     elif command -v gctb64 >/dev/null 2>&1; then \
-      ln -sf "$(command -v gctb64)" /usr/local/bin/gctb; \
+      install -m 0755 "$(command -v gctb64)" /usr/bin/gctb; \
     else \
       echo "gctb binary not found after install" >&2; \
       exit 1; \
     fi; \
-    command -v gctb
+    test -x /usr/bin/gctb
 
 WORKDIR /app
 COPY app/run.py /app/run.py

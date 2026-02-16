@@ -88,15 +88,8 @@ jobs:
             set -euo pipefail
             bcftools --version | head -n 1
             /usr/bin/time --version | head -n 1
-            plink2 --help >/dev/null
-            if command -v gctb >/dev/null 2>&1; then
-              gctb --help >/dev/null
-            elif command -v gctb64 >/dev/null 2>&1; then
-              gctb64 --help >/dev/null
-            else
-              echo "gctb binary missing" >&2
-              exit 1
-            fi
+            /usr/bin/plink2 --help >/dev/null
+            /usr/bin/gctb --help >/dev/null
           '
 
       - name: Publish SIF release assets
