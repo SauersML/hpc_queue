@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -419,6 +420,16 @@ def enqueue_heartbeat(config: Config) -> None:
     )
 
 
+def heartbeat_loop(config: Config) -> None:
+    interval = max(1.0, config.heartbeat_interval_seconds)
+    while True:
+        try:
+            enqueue_heartbeat(config)
+        except Exception as exc:
+            print(f"heartbeat error: {exc}")
+        time.sleep(interval)
+
+
 def process_once(config: Config) -> None:
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
@@ -523,13 +534,16 @@ def main() -> None:
         )
     )
 
-    last_heartbeat = 0.0
+    heartbeat_thread = threading.Thread(
+        target=heartbeat_loop,
+        args=(config,),
+        daemon=True,
+        name="heartbeat-loop",
+    )
+    heartbeat_thread.start()
+
     while True:
         try:
-            now = time.monotonic()
-            if now - last_heartbeat >= max(1.0, config.heartbeat_interval_seconds):
-                enqueue_heartbeat(config)
-                last_heartbeat = now
             process_once(config)
         except Exception as exc:
             print(f"poll loop error: {exc}")
