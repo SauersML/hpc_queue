@@ -1,6 +1,6 @@
 # hpc_queue
 
-Single CLI: `q.py`
+Single CLI: `q`
 
 - Local submits jobs.
 - HPC runs compute worker.
@@ -13,10 +13,25 @@ Single CLI: `q.py`
 
 ## Setup
 
+Install `q` command:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+ln -sf /Users/user/hpc_queue/q.py "$HOME/.local/bin/q"
+chmod +x /Users/user/hpc_queue/q.py
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+If needed, add this to your shell profile (`~/.zshrc` or `~/.bashrc`):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 Run one command to configure:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py login
+q login
 ```
 
 ## Local machine
@@ -24,48 +39,48 @@ python3 /Users/user/hpc_queue/q.py login
 Submit a command job:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py submit ls
-python3 /Users/user/hpc_queue/q.py submit "python /work/script.py --iters 100"
-python3 /Users/user/hpc_queue/q.py python3 /work/thisfile.py
+q submit ls
+q submit "python /work/script.py --iters 100"
+q python3 /work/thisfile.py
 ```
 
 Submit raw JSON input instead:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py submit --json '{"command":"ls -la"}'
+q submit --json '{"command":"ls -la"}'
 ```
 
 Pull results and live logs:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py results
+q results
 ```
 
-`q.py results` prints streaming log events (`status=running`) and final completion message with `result_pointer`.
+`q results` prints streaming log events (`status=running`) and final completion message with `result_pointer`.
 
 ## HPC node
 
 Start worker + auto image refresh + cron watchdog in one command:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py start
+q start
 ```
 
 Check status:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py status
+q status
 ```
 
 Stop worker:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py stop
+q stop
 ```
 
 ## How worker image updates happen
 
-`q.py start` resolves the remote image digest first.
+`q start` resolves the remote image digest first.
 - If digest is unchanged, it skips pull.
 - If digest changed, it pulls and updates the local `.sif`.
 
