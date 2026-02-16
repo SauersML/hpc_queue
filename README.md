@@ -186,7 +186,7 @@ The default runtime image now includes:
 - Standard dev tools (`build-essential`, `git`, `curl`, `jq`, `vim`, `htop`, etc.)
 - `bcftools`
 - `plink2` and `gctb` (via micromamba/bioconda)
-- Cloned repos:
+- Empty mount targets:
   - `/gnomon`
   - `/reagle`
 

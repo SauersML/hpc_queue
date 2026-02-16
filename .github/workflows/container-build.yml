@@ -15,6 +15,7 @@ concurrency:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
       packages: write
@@ -61,7 +62,7 @@ jobs:
             type=gha,scope=hpc-queue-runtime-open
             type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:buildcache
           cache-to: |
-            type=gha,mode=max,scope=hpc-queue-runtime-open
+            type=gha,mode=max,ignore-error=true,scope=hpc-queue-runtime-open
             type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:buildcache,mode=max
 
       - name: Install Apptainer

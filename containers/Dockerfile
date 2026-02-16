@@ -1,17 +1,17 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GNOMON_REF=main
-ARG REAGLE_REF=main
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV PIP_NO_CACHE_DIR=1
 ENV MAMBA_ROOT_PREFIX=/opt/conda
 ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
 ENV PATH=/opt/conda/bin:/opt/conda/envs/base/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
         bcftools \
         build-essential \
@@ -37,7 +37,8 @@ RUN apt-get update \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -sSfL https://micro.mamba.pm/api/micromamba/linux-64/latest \
+RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
+    curl -sSfL https://micro.mamba.pm/api/micromamba/linux-64/latest \
       | tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba \
     && micromamba create -y -n base -c conda-forge -c bioconda plink2 gctb
 
@@ -48,10 +49,10 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
     && cargo --version
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install -r /tmp/requirements.txt
 
-RUN git clone --depth 1 --branch "${GNOMON_REF}" https://github.com/SauersML/gnomon.git /gnomon \
-    && git clone --depth 1 --branch "${REAGLE_REF}" https://github.com/SauersML/reagle.git /reagle
+RUN mkdir -p /gnomon /reagle
 
 RUN set -eux; \
     command -v bcftools; \
