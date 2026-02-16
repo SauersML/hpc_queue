@@ -59,4 +59,10 @@ python3 /Users/user/hpc_queue/q.py stop
 
 ## How worker image updates happen
 
-`q.py worker` always refreshes the local `.sif` before starting the worker.
+`q.py worker` resolves the remote image digest first.
+- If digest is unchanged, it skips pull.
+- If digest changed, it pulls and updates the local `.sif`.
+
+This gives both properties:
+- never stale (digest checked every startup)
+- no unnecessary re-pulls
