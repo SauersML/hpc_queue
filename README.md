@@ -103,3 +103,15 @@ This gives both properties:
 - no unnecessary re-pulls
 
 The running HPC consumer also checks digest before each job execution, so long-running workers stay fresh without forced re-pulls.
+
+## Runtime image contents
+
+The default runtime image now includes:
+- Python 3.12 + common data/biology Python packages from `containers/requirements.txt`
+- Rust toolchain (`rustup` stable)
+- Standard dev tools (`build-essential`, `git`, `curl`, `jq`, `vim`, `htop`, etc.)
+- `bcftools`
+- `plink2` and `gctb` (via micromamba/bioconda)
+- Cloned repos:
+  - `/opt/src/gnomon`
+  - `/opt/src/reagle`
