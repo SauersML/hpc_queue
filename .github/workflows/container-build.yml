@@ -79,7 +79,7 @@ jobs:
           if [[ "$OWNER_TYPE" == "Organization" ]]; then
             VIS_URL="https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE/visibility"
           else
-            VIS_URL="https://api.github.com/users/$OWNER/packages/container/$PACKAGE/visibility"
+            VIS_URL="https://api.github.com/user/packages/container/$PACKAGE/visibility"
           fi
 
           curl -fsSL -X PATCH \
