@@ -68,7 +68,7 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
     path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
 
-def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> None:
+def cmd_login(queue_token: str | None, api_key: str | None) -> None:
     existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
     existing_api_key = os.getenv("API_KEY", "")
 
@@ -84,6 +84,7 @@ def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> 
         final_api_key = secrets.token_hex(24)
         generated = True
 
+    worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL)
     updates = {
         "CF_QUEUES_API_TOKEN": final_queue_token,
         "API_KEY": final_api_key,
@@ -99,33 +100,17 @@ def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> 
         print("api-key: kept existing/provided value")
 
 
-def parse_input(raw: str) -> dict[str, Any]:
-    if raw.startswith("@"):
-        file_path = Path(raw[1:]).expanduser().resolve()
-        payload = json.loads(file_path.read_text(encoding="utf-8"))
-    else:
-        payload = json.loads(raw)
-
-    if not isinstance(payload, dict):
-        raise RuntimeError("input must be a JSON object")
-    return payload
-
-
-def build_submit_input(raw_parts: list[str], json_mode: bool) -> dict[str, Any]:
+def build_submit_input(raw_parts: list[str]) -> dict[str, Any]:
     if not raw_parts:
-        raise RuntimeError("submit requires a command or --json payload")
+        raise RuntimeError("submit requires a command")
     raw = " ".join(raw_parts).strip()
-    if json_mode:
-        return parse_input(raw)
-    if raw.startswith("{") or raw.startswith("@"):
-        return parse_input(raw)
     return {"command": raw}
 
 
-def cmd_submit(raw_parts: list[str], json_mode: bool) -> None:
+def cmd_submit(raw_parts: list[str]) -> None:
     api_key = require_env("API_KEY")
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
-    payload = {"input": build_submit_input(raw_parts, json_mode)}
+    payload = {"input": build_submit_input(raw_parts)}
 
     req = request.Request(
         url=f"{worker_url}/jobs",
@@ -233,22 +218,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="hpc_queue control CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    submit = sub.add_parser("submit", help="submit a job input JSON")
-    submit.add_argument(
-        "--json",
-        action="store_true",
-        help="treat payload as JSON (otherwise payload is treated as shell command)",
-    )
+    submit = sub.add_parser("submit", help="submit a shell command job")
     submit.add_argument(
         "payload",
         nargs=argparse.REMAINDER,
-        help="shell command (default) or JSON object/@file when --json is used",
+        help="shell command to run inside the container",
     )
 
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
-    login.add_argument("--worker-url", default=DEFAULT_WORKER_URL, help="Worker base URL")
     sub.add_parser("start", help="start compute worker and install cron watchdog")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
@@ -271,12 +250,11 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     if args.command == "submit":
-        cmd_submit(args.payload, args.json)
+        cmd_submit(args.payload)
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,
             api_key=args.api_key,
-            worker_url=args.worker_url,
         )
     elif args.command in {"start", "worker"}:
         cmd_worker()

@@ -35,12 +35,6 @@ q submit "python /work/script.py --iters 100"
 q python3 /work/thisfile.py
 ```
 
-Submit raw JSON input instead:
-
-```bash
-q submit --json '{"command":"ls -la"}'
-```
-
 Pull one batch of result messages:
 
 ```bash
