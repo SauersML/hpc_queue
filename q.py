@@ -556,19 +556,6 @@ def cmd_logs(job_id: str) -> None:
 
 
 def cmd_status(output_json: bool = False) -> None:
-    # Best-effort refresh of local cache/heartbeat from results queue.
-    if os.getenv("CF_QUEUES_API_TOKEN", ""):
-        try:
-            subprocess.run(
-                [sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py")],
-                cwd=str(ROOT),
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
-
     running = False
     pid = ""
     if PID_FILE.exists():
@@ -584,6 +571,18 @@ def cmd_status(output_json: bool = False) -> None:
         local_running = process_matches(local_pid, "local_pull_results.py --loop")
         if not local_running:
             local_pid = ""
+
+    # On local machines, ensure watcher is running so status can learn heartbeat.
+    if not running and not local_running and os.getenv("CF_QUEUES_API_TOKEN", ""):
+        try:
+            ensure_local_watcher_running()
+            if LOCAL_WATCHER_PID_FILE.exists():
+                local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
+                local_running = process_matches(local_pid, "local_pull_results.py --loop")
+                if not local_running:
+                    local_pid = ""
+        except Exception:
+            pass
 
     heartbeat = None
     heartbeat_age_seconds = None
@@ -602,6 +601,18 @@ def cmd_status(output_json: bool = False) -> None:
                 hpc_running_remote = heartbeat_age_seconds <= max_age
         except Exception:
             heartbeat = None
+
+    # If this machine is running the HPC consumer, treat remote as healthy here.
+    if hpc_running_remote is None and running:
+        hpc_running_remote = True
+        if heartbeat is None:
+            heartbeat = {
+                "event_type": "heartbeat",
+                "status": "alive",
+                "source": "local-process",
+                "hostname": os.uname().nodename,
+                "pid": int(pid) if pid.isdigit() else pid,
+            }
 
     payload = {
         "running": running,
