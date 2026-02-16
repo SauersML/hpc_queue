@@ -105,7 +105,6 @@ jobs:
   cloudflare-e2e:
     name: Cloudflare Queue E2E
     runs-on: ubuntu-latest
-    if: ${{ secrets.HPC_QUEUE_KEY != '' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
       CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
@@ -129,5 +128,12 @@ jobs:
         run: npm ci
         working-directory: producer-worker
 
+      - name: Skip when HPC_QUEUE_KEY is not set
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        run: |
+          echo "HPC_QUEUE_KEY secret not set; skipping Cloudflare E2E."
+          exit 0
+
       - name: Run Cloudflare E2E script
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         run: tests/e2e/cloudflare_e2e.sh
