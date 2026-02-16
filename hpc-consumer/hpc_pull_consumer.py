@@ -44,7 +44,6 @@ class Config:
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
     heartbeat_interval_seconds: float = 30.0
-    max_concurrent_jobs: int = 5
     results_dir: str = "results"
     apptainer_image: str = ""
     apptainer_bin: str = "apptainer"
@@ -88,7 +87,6 @@ def load_config() -> Config:
         poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
         heartbeat_interval_seconds=float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30")),
-        max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", os.getenv("BATCH_SIZE", "5"))),
         results_dir=os.getenv("RESULTS_DIR", "results"),
         apptainer_image=os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE),
         apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
@@ -522,7 +520,7 @@ def process_once(config: Config) -> None:
                 print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
             return str(lease_id)
 
-    max_workers = max(1, min(config.max_concurrent_jobs, len(messages)))
+    max_workers = max(1, min(config.batch_size, len(messages)))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="job-worker") as pool:
         futures = [pool.submit(process_message, message) for message in messages]
         for future in as_completed(futures):
