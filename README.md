@@ -17,10 +17,11 @@ Single CLI: `q.py`
 cp /Users/user/hpc_queue/.env.example /Users/user/hpc_queue/.env
 ```
 
-Set required values in `.env`:
+Run one command to configure:
 
-- `CF_QUEUES_API_TOKEN`
-- `API_KEY` (only required for `q.py submit`)
+```bash
+python3 /Users/user/hpc_queue/q.py login
+```
 
 ## Local machine
 

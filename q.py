@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import secrets
 import subprocess
 import sys
 import time
@@ -40,6 +42,63 @@ def require_env(name: str) -> str:
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
     subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True)
+
+
+def upsert_env(path: Path, updates: dict[str, str]) -> None:
+    lines: list[str] = []
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in line:
+            out.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+
+    for key, value in updates.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+
+    path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+
+
+def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> None:
+    existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
+    existing_api_key = os.getenv("API_KEY", "")
+
+    final_queue_token = queue_token or existing_queue_token
+    if not final_queue_token:
+        final_queue_token = getpass.getpass("Cloudflare queue token (HPC_QUEUE_KEY): ").strip()
+    if not final_queue_token:
+        raise RuntimeError("CF_QUEUES_API_TOKEN cannot be empty")
+
+    final_api_key = api_key or existing_api_key
+    generated = False
+    if not final_api_key:
+        final_api_key = secrets.token_hex(24)
+        generated = True
+
+    updates = {
+        "CF_QUEUES_API_TOKEN": final_queue_token,
+        "API_KEY": final_api_key,
+        "WORKER_URL": worker_url,
+    }
+    upsert_env(ENV_PATH, updates)
+    load_dotenv(ENV_PATH)
+
+    print("login configuration saved to .env")
+    if generated:
+        print(f"generated API_KEY: {final_api_key}")
+    else:
+        print("API_KEY: kept existing/provided value")
 
 
 def parse_input(raw: str) -> dict[str, Any]:
@@ -142,6 +201,10 @@ def build_parser() -> argparse.ArgumentParser:
     submit = sub.add_parser("submit", help="submit a job input JSON")
     submit.add_argument("input", help="JSON object or @/path/to/input.json")
 
+    login = sub.add_parser("login", help="configure local .env")
+    login.add_argument("--queue-token", help="Cloudflare queue API token (HPC_QUEUE_KEY)")
+    login.add_argument("--api-key", help="Worker API key for /jobs auth; auto-generated if omitted")
+    login.add_argument("--worker-url", default=DEFAULT_WORKER_URL, help="Worker base URL")
     sub.add_parser("worker", help="start compute worker and install cron watchdog")
     sub.add_parser("results", help="pull results on local machine")
     sub.add_parser("status", help="show worker/cron status")
@@ -157,6 +220,12 @@ def main() -> None:
 
     if args.command == "submit":
         cmd_submit(args.input)
+    elif args.command == "login":
+        cmd_login(
+            queue_token=args.queue_token,
+            api_key=args.api_key,
+            worker_url=args.worker_url,
+        )
     elif args.command == "worker":
         cmd_worker()
     elif args.command == "results":
