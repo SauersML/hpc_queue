@@ -8,6 +8,7 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -15,10 +16,12 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
-DEFAULT_APPTAINER_IMAGE = str(ROOT / "runtime" / "hpc-queue-runtime.sif")
 RESULTS_CACHE_PATH = ROOT / "laptop-consumer" / "results_cache.jsonl"
+LOCAL_RESULTS_DIR = ROOT / "local-results"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
+DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
+DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 
 
 def load_dotenv(path: Path) -> None:
@@ -111,7 +114,121 @@ def build_submit_input(raw_parts: list[str]) -> dict[str, Any]:
     return {"command": raw}
 
 
-def cmd_submit(raw_parts: list[str]) -> None:
+def results_api_base() -> str:
+    account_id = os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID)
+    results_queue_id = os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID)
+    return (
+        "https://api.cloudflare.com/client/v4/accounts/"
+        f"{account_id}/queues/{results_queue_id}/messages"
+    )
+
+
+def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def parse_result_messages(resp: dict[str, Any]) -> list[dict[str, Any]]:
+    result = resp.get("result", {})
+    if isinstance(result, dict):
+        return result.get("messages", [])
+    if isinstance(result, list):
+        return result
+    return []
+
+
+def cache_result_event(event: dict[str, Any]) -> None:
+    RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
+        cache_fp.write(json.dumps(event, separators=(",", ":")) + "\n")
+
+
+def write_local_result_file(event: dict[str, Any]) -> Path | None:
+    job_id = str(event.get("job_id", "")).strip()
+    status = str(event.get("status", "")).strip()
+    if not job_id or status not in {"completed", "failed"}:
+        return None
+    LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
+    out_path.write_text(json.dumps(event, indent=2), encoding="utf-8")
+    return out_path
+
+
+def pull_results_once(queue_token: str) -> list[dict[str, Any]]:
+    pulled = cf_post(
+        url=f"{results_api_base()}/pull",
+        token=queue_token,
+        payload={
+            "batch_size": int(os.getenv("RESULTS_BATCH_SIZE", "10")),
+            "visibility_timeout": int(os.getenv("RESULTS_VISIBILITY_TIMEOUT_MS", "120000")),
+        },
+    )
+    messages = parse_result_messages(pulled)
+    if not messages:
+        return []
+
+    acks: list[dict[str, str]] = []
+    events: list[dict[str, Any]] = []
+    for message in messages:
+        lease_id = message.get("lease_id")
+        if not lease_id:
+            continue
+        body = message.get("body")
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except Exception:
+                body = {"raw": body}
+        if isinstance(body, dict):
+            events.append(body)
+            cache_result_event(body)
+            write_local_result_file(body)
+        acks.append({"lease_id": lease_id})
+
+    if acks:
+        cf_post(
+            url=f"{results_api_base()}/ack",
+            token=queue_token,
+            payload={"acks": acks, "retries": []},
+        )
+    return events
+
+
+def wait_for_job_result(job_id: str, queue_token: str) -> Path:
+    poll_seconds = float(os.getenv("RESULTS_POLL_INTERVAL_SECONDS", "2"))
+    last_heartbeat = time.monotonic()
+    while True:
+        events = pull_results_once(queue_token)
+        for event in events:
+            if str(event.get("job_id")) != job_id:
+                continue
+            status = str(event.get("status", ""))
+            if status in {"completed", "failed"}:
+                out_path = write_local_result_file(event)
+                if out_path is None:
+                    raise RuntimeError("internal error: missing result file path")
+                print(json.dumps(event, indent=2))
+                print(f"local_result_file: {out_path}")
+                return out_path
+
+        now = time.monotonic()
+        if now - last_heartbeat >= 30:
+            print(f"waiting for job {job_id} ...")
+            last_heartbeat = now
+        time.sleep(poll_seconds)
+
+
+def cmd_submit(raw_parts: list[str], no_wait: bool) -> None:
     api_key = require_env("API_KEY")
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
     payload = {"input": build_submit_input(raw_parts)}
@@ -138,6 +255,13 @@ def cmd_submit(raw_parts: list[str]) -> None:
         with request.urlopen(req, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         print(json.dumps(body, indent=2))
+        if no_wait:
+            return
+        job_id = str(body.get("job_id", "")).strip()
+        if not job_id:
+            raise RuntimeError("submit succeeded but missing job_id")
+        queue_token = require_env("CF_QUEUES_API_TOKEN")
+        wait_for_job_result(job_id=job_id, queue_token=queue_token)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
@@ -269,6 +393,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     submit = sub.add_parser("submit", help="submit a shell command job")
     submit.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="queue job and return immediately (default waits for completion)",
+    )
+    submit.add_argument(
         "payload",
         nargs=argparse.REMAINDER,
         help="shell command to run inside the container",
@@ -299,7 +428,7 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     if args.command == "submit":
-        cmd_submit(args.payload)
+        cmd_submit(args.payload, args.no_wait)
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,

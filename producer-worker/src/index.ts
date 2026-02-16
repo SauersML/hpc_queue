@@ -15,6 +15,14 @@ type JobMessage = {
   metadata?: Record<string, unknown>;
 };
 
+function shortJobId(): string {
+  const ts = Date.now().toString(36);
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 6);
+  return `j${ts}${rand}`;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -47,7 +55,7 @@ export default {
       }
 
       const job: JobMessage = {
-        job_id: crypto.randomUUID(),
+        job_id: shortJobId(),
         input: payload.input ?? {},
         created_at: new Date().toISOString(),
         metadata: payload.metadata,

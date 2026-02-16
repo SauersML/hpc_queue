@@ -16,6 +16,7 @@ from urllib import request
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "laptop-consumer" / "results_cache.jsonl"
+LOCAL_RESULTS_DIR = Path(__file__).resolve().parent.parent / "local-results"
 
 
 @dataclass
@@ -90,6 +91,7 @@ def process_once(config: Config) -> None:
 
     acks: list[dict[str, str]] = []
     RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     for message in messages:
         lease_id = message.get("lease_id")
         if not lease_id:
@@ -106,6 +108,14 @@ def process_once(config: Config) -> None:
         print(body_json)
         with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
             cache_fp.write(body_json + "\n")
+        if isinstance(body, dict):
+            job_id = str(body.get("job_id", "")).strip()
+            status = str(body.get("status", "")).strip()
+            if job_id and status in {"completed", "failed"}:
+                (LOCAL_RESULTS_DIR / f"{job_id}.json").write_text(
+                    json.dumps(body, indent=2),
+                    encoding="utf-8",
+                )
         acks.append({"lease_id": lease_id})
 
     if acks:

@@ -35,11 +35,16 @@ q submit "python /work/script.py --iters 100"
 q python3 /work/thisfile.py
 ```
 
+`q submit` waits until the job finishes by default and writes:
+- `local-results/<job_id>.json`
+
 Pull one batch of result messages:
 
 ```bash
 q results
 ```
+
+`q results` also writes `local-results/<job_id>.json` for completed jobs.
 
 View job logs on demand:
 
