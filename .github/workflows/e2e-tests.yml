@@ -38,7 +38,7 @@ jobs:
         run: |
           python -m py_compile q.py
           python -m py_compile hpc-consumer/hpc_pull_consumer.py
-          python -m py_compile laptop-consumer/laptop_pull_results.py
+          python -m py_compile local-consumer/local_pull_results.py
           python -m py_compile containers/app/run.py
           python -m py_compile tests/e2e/enqueue_message.py
 
