@@ -9,7 +9,7 @@ ENV PIP_NO_CACHE_DIR=1
 ENV MAMBA_ROOT_PREFIX=/opt/conda
 ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
-ENV PATH=/opt/conda/envs/base/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/conda/bin:/opt/conda/envs/base/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
