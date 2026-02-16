@@ -41,7 +41,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime
+          images: ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open
           tags: |
             type=raw,value=latest
             type=sha,prefix=sha-
@@ -58,32 +58,8 @@ jobs:
           provenance: false
           sbom: false
           cache-from: |
-            type=gha,scope=hpc-queue-runtime
-            type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime:buildcache
+            type=gha,scope=hpc-queue-runtime-open
+            type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:buildcache
           cache-to: |
-            type=gha,mode=max,scope=hpc-queue-runtime
-            type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime:buildcache,mode=max
-
-      - name: Ensure GHCR package is public
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          PACKAGE: hpc-queue-runtime
-        run: |
-          set -euo pipefail
-          OWNER_TYPE="$(curl -fsSL \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/users/$OWNER" | jq -r '.type')"
-
-          if [[ "$OWNER_TYPE" == "Organization" ]]; then
-            VIS_URL="https://api.github.com/orgs/$OWNER/packages/container/$PACKAGE/visibility"
-          else
-            VIS_URL="https://api.github.com/user/packages/container/$PACKAGE/visibility"
-          fi
-
-          curl -fsSL -X PATCH \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$VIS_URL" \
-            -d '{"visibility":"public"}'
+            type=gha,mode=max,scope=hpc-queue-runtime-open
+            type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:buildcache,mode=max

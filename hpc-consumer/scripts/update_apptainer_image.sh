@@ -15,7 +15,7 @@ set +a
 
 : "${APPTAINER_BIN:=apptainer}"
 : "${APPTAINER_IMAGE:=$REPO_DIR/runtime/hpc-queue-runtime.sif}"
-: "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime:latest}"
+: "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime-open:latest}"
 : "${PYTHON_BIN:=python3}"
 
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
