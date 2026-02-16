@@ -39,12 +39,14 @@ jobs:
           python -m py_compile hpc-consumer/hpc_pull_consumer.py
           python -m py_compile laptop-consumer/laptop_pull_results.py
           python -m py_compile containers/app/run.py
+          python -m py_compile tests/e2e/enqueue_message.py
 
       - name: Shell syntax checks
         run: |
           bash -n hpc-consumer/install_user_service.sh
           bash -n hpc-consumer/service_control.sh
           bash -n hpc-consumer/scripts/update_apptainer_image.sh
+          bash -n tests/e2e/cloudflare_e2e.sh
 
   local-worker-smoke:
     name: Local Worker Smoke
@@ -103,6 +105,7 @@ jobs:
   cloudflare-e2e:
     name: Cloudflare Queue E2E
     runs-on: ubuntu-latest
+    if: ${{ secrets.HPC_QUEUE_KEY != '' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
       CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
@@ -126,97 +129,5 @@ jobs:
         run: npm ci
         working-directory: producer-worker
 
-      - name: Create temp queues and attach HTTP pull consumers
-        id: queues
-        run: |
-          set -euo pipefail
-          cd producer-worker
-
-          JOBS_QUEUE="ci-jobs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          RESULTS_QUEUE="ci-results-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          npx wrangler queues create "$JOBS_QUEUE"
-          npx wrangler queues create "$RESULTS_QUEUE"
-
-          for i in {1..10}; do
-            npx wrangler queues consumer http add "$JOBS_QUEUE" && break
-            sleep 2
-          done
-
-          for i in {1..10}; do
-            npx wrangler queues consumer http add "$RESULTS_QUEUE" && break
-            sleep 2
-          done
-
-          JOBS_QUEUE_ID="$(npx wrangler queues info "$JOBS_QUEUE" | awk -F': ' '/Queue ID:/ {print $2}')"
-          RESULTS_QUEUE_ID="$(npx wrangler queues info "$RESULTS_QUEUE" | awk -F': ' '/Queue ID:/ {print $2}')"
-
-          echo "jobs_queue=$JOBS_QUEUE" >> "$GITHUB_OUTPUT"
-          echo "results_queue=$RESULTS_QUEUE" >> "$GITHUB_OUTPUT"
-          echo "jobs_queue_id=$JOBS_QUEUE_ID" >> "$GITHUB_OUTPUT"
-          echo "results_queue_id=$RESULTS_QUEUE_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Enqueue CI job message
-        env:
-          JOBS_QUEUE_ID: ${{ steps.queues.outputs.jobs_queue_id }}
-        run: |
-          set -euo pipefail
-          JOB_ID="ci-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "JOB_ID=$JOB_ID" >> "$GITHUB_ENV"
-          RESP="$(curl -fsS -X POST \
-            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/queues/${JOBS_QUEUE_ID}/messages" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data "{\"body\":{\"job_id\":\"${JOB_ID}\",\"task\":\"ci-e2e\",\"input\":{\"iterations\":3,\"source\":\"github-actions\"}}}")"
-          echo "$RESP" | grep -q '"success":true'
-
-      - name: Run HPC consumer once (direct mode)
-        env:
-          CF_JOBS_QUEUE_ID: ${{ steps.queues.outputs.jobs_queue_id }}
-          CF_RESULTS_QUEUE_ID: ${{ steps.queues.outputs.results_queue_id }}
-          CF_QUEUES_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
-          APPTAINER_BIN: /bin/echo
-          APPTAINER_IMAGE: ci-dummy-image
-          RESULTS_DIR: ${{ runner.temp }}/results
-          POLL_INTERVAL_SECONDS: "1"
-          PYTHONUNBUFFERED: "1"
-        run: |
-          set -euo pipefail
-          python hpc-consumer/hpc_pull_consumer.py > "$RUNNER_TEMP/hpc.log" 2>&1 &
-          PID=$!
-          sleep 8
-          kill "$PID" >/dev/null 2>&1 || true
-          cat "$RUNNER_TEMP/hpc.log"
-
-      - name: Pull result events and verify job id
-        env:
-          CF_RESULTS_QUEUE_ID: ${{ steps.queues.outputs.results_queue_id }}
-          CF_QUEUES_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
-          RESULTS_POLL_INTERVAL_SECONDS: "1"
-          PYTHONUNBUFFERED: "1"
-        run: |
-          set -euo pipefail
-          python laptop-consumer/laptop_pull_results.py > "$RUNNER_TEMP/laptop.log" 2>&1 &
-          PID=$!
-          sleep 8
-          kill "$PID" >/dev/null 2>&1 || true
-
-          cat "$RUNNER_TEMP/laptop.log"
-
-          grep -q "$JOB_ID" "$RUNNER_TEMP/laptop.log"
-          test -f "$RUNNER_TEMP/results/$JOB_ID/output.json"
-
-      - name: Cleanup temp queues
-        if: always()
-        env:
-          JOBS_QUEUE: ${{ steps.queues.outputs.jobs_queue }}
-          RESULTS_QUEUE: ${{ steps.queues.outputs.results_queue }}
-        run: |
-          set +e
-          cd producer-worker
-          if [ -n "${JOBS_QUEUE:-}" ]; then
-            npx wrangler queues delete "$JOBS_QUEUE" --force
-          fi
-          if [ -n "${RESULTS_QUEUE:-}" ]; then
-            npx wrangler queues delete "$RESULTS_QUEUE" --force
-          fi
+      - name: Run Cloudflare E2E script
+        run: tests/e2e/cloudflare_e2e.sh
