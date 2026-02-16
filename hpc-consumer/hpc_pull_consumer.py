@@ -25,6 +25,7 @@ from urllib import request
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+DEFAULT_PULL_BATCH_SIZE = 100
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
 DEFAULT_EXTERNAL_REPOS_ROOT = str(ROOT_DIR / "runtime" / "external-src")
@@ -39,7 +40,6 @@ class Config:
     jobs_queue_id: str
     results_queue_id: str
     api_token: str
-    batch_size: int = 5
     visibility_timeout_ms: int = 120000
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
@@ -82,7 +82,6 @@ def load_config() -> Config:
         jobs_queue_id=os.getenv("CF_JOBS_QUEUE_ID", DEFAULT_CF_JOBS_QUEUE_ID),
         results_queue_id=os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID),
         api_token=req("CF_QUEUES_API_TOKEN"),
-        batch_size=int(os.getenv("BATCH_SIZE", "5")),
         visibility_timeout_ms=int(os.getenv("VISIBILITY_TIMEOUT_MS", "120000")),
         poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
@@ -439,7 +438,7 @@ def process_once(config: Config) -> None:
         url=f"{config.jobs_api_base}/pull",
         token=config.api_token,
         payload={
-            "batch_size": config.batch_size,
+            "batch_size": DEFAULT_PULL_BATCH_SIZE,
             "visibility_timeout": config.visibility_timeout_ms,
         },
     )
@@ -520,7 +519,7 @@ def process_once(config: Config) -> None:
                 print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
             return str(lease_id)
 
-    max_workers = max(1, min(config.batch_size, len(messages)))
+    max_workers = max(1, len(messages))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="job-worker") as pool:
         futures = [pool.submit(process_message, message) for message in messages]
         for future in as_completed(futures):
@@ -544,7 +543,7 @@ def main() -> None:
             {
                 "jobs_queue_id": config.jobs_queue_id,
                 "results_queue_id": config.results_queue_id,
-                "batch_size": config.batch_size,
+                "batch_size": DEFAULT_PULL_BATCH_SIZE,
                 "visibility_timeout_ms": config.visibility_timeout_ms,
                 "poll_interval_seconds": config.poll_interval_seconds,
             }
