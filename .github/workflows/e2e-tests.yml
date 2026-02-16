@@ -112,8 +112,8 @@ jobs:
     name: Cloudflare Queue E2E
     runs-on: ubuntu-latest
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
-      WORKER_API_KEY: ${{ secrets.API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.QUEUE_TOKEN || secrets.HPC_QUEUE_KEY }}
+      API_KEY: ${{ secrets.API_KEY }}
       WORKER_URL: "https://hpc-queue-producer.sauer354.workers.dev"
       CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
     steps:
@@ -137,11 +137,11 @@ jobs:
         working-directory: producer-worker
 
       - name: Skip when required secrets are missing
-        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.WORKER_API_KEY == '' }}
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.API_KEY == '' }}
         run: |
-          echo "Missing HPC_QUEUE_KEY or API_KEY secret; skipping Cloudflare E2E."
+          echo "Missing queue-token (QUEUE_TOKEN/HPC_QUEUE_KEY) or api-key (API_KEY) secret; skipping Cloudflare E2E."
           exit 0
 
       - name: Run Cloudflare E2E script
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.WORKER_API_KEY != '' }}
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.API_KEY != '' }}
         run: tests/e2e/full_e2e_existing_worker.sh

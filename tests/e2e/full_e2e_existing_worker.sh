@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 RUNTIME_DIR="${RUNNER_TEMP:-/tmp}"
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
-: "${WORKER_API_KEY:?WORKER_API_KEY is required for /jobs endpoint}"
+: "${API_KEY:?API_KEY is required for /jobs endpoint}"
 : "${WORKER_URL:?WORKER_URL is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:=59908b351c3a3321ff84dd2d78bf0b42}"
 : "${CF_JOBS_QUEUE_ID:=f52e2e6bb569425894ede9141e9343a5}"
@@ -17,7 +17,7 @@ JOB_MARKER="gha-endpoint-${RUN_ID}-${ATTEMPT}"
 
 RESP="$(curl -fsS -X POST "${WORKER_URL%/}/jobs" \
   -H 'content-type: application/json' \
-  -H "x-api-key: $WORKER_API_KEY" \
+  -H "x-api-key: $API_KEY" \
   -d "{\"input\":{\"iterations\":3,\"source\":\"github-actions-endpoint\",\"marker\":\"$JOB_MARKER\"}}")"
 
 echo "$RESP" | grep -q '"status":"queued"'

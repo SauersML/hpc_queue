@@ -8,8 +8,8 @@ Single CLI: `q`
 
 ## Keys
 
-- `API_KEY`: auth for public submit endpoint (`/jobs`).
-- `CF_QUEUES_API_TOKEN`: auth for Cloudflare Queue API (pull/ack/enqueue).
+- `api-key`: auth for public submit endpoint (`/jobs`), stored as `API_KEY`.
+- `queue-token`: auth for Cloudflare Queue API (pull/ack/enqueue), stored as `CF_QUEUES_API_TOKEN`.
 
 ## Setup
 

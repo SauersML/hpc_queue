@@ -74,7 +74,7 @@ def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> 
 
     final_queue_token = queue_token or existing_queue_token
     if not final_queue_token:
-        final_queue_token = getpass.getpass("Cloudflare queue token (HPC_QUEUE_KEY): ").strip()
+        final_queue_token = getpass.getpass("queue-token (Cloudflare Queue API token): ").strip()
     if not final_queue_token:
         raise RuntimeError("CF_QUEUES_API_TOKEN cannot be empty")
 
@@ -94,9 +94,9 @@ def cmd_login(queue_token: str | None, api_key: str | None, worker_url: str) -> 
 
     print("login configuration saved to .env")
     if generated:
-        print(f"generated API_KEY: {final_api_key}")
+        print(f"generated api-key: {final_api_key}")
     else:
-        print("API_KEY: kept existing/provided value")
+        print("api-key: kept existing/provided value")
 
 
 def parse_input(raw: str) -> dict[str, Any]:
@@ -246,8 +246,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     login = sub.add_parser("login", help="configure local .env")
-    login.add_argument("--queue-token", help="Cloudflare queue API token (HPC_QUEUE_KEY)")
-    login.add_argument("--api-key", help="Worker API key for /jobs auth; auto-generated if omitted")
+    login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
+    login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
     login.add_argument("--worker-url", default=DEFAULT_WORKER_URL, help="Worker base URL")
     sub.add_parser("start", help="start compute worker and install cron watchdog")
     sub.add_parser("worker", help="deprecated alias for start")
