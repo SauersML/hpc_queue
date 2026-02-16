@@ -5,9 +5,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV MAMBA_ROOT_PREFIX=/opt/conda
+ENV MAMBA_TOOLS_ENV=/opt/conda/envs/tools
 ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
-ENV PATH=/opt/conda/bin:/opt/conda/envs/base/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/conda/bin:/opt/conda/envs/tools/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -40,7 +41,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     curl -sSfL https://micro.mamba.pm/api/micromamba/linux-64/latest \
       | tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba \
-    && micromamba create -y -n base -c conda-forge -c bioconda plink2 gctb
+    && micromamba create -y -p "${MAMBA_TOOLS_ENV}" -c conda-forge -c bioconda plink2 gctb
 
 RUN set -eux; \
     if ! command -v plink2 >/dev/null 2>&1; then \
