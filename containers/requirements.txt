@@ -12,3 +12,4 @@ stdpopsim
 statsmodels
 pandas-plink
 pgscatalog-calc
+demesdraw

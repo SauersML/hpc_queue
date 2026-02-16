@@ -92,6 +92,7 @@ jobs:
             /usr/bin/gctb --help >/dev/null
             Rscript -e "library(mgcv); cat(\"mgcv OK\n\")"
             python -c "import rpy2.robjects as ro; from rpy2.robjects.packages import importr; importr(\"mgcv\"); print(\"rpy2+mgcv OK\")"
+            python -c "import demesdraw; print(\"demesdraw OK\")"
           '
 
       - name: Publish SIF release assets
