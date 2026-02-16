@@ -47,6 +47,11 @@ fi
 
 chmod +x "$INSTALL_DIR/q.py"
 mkdir -p "$BIN_DIR"
+# Legacy installs created q as a symlink to q.py.
+# If that symlink still exists, writing launcher content would overwrite q.py.
+if [[ -L "$Q_LINK" ]]; then
+  rm -f "$Q_LINK"
+fi
 cat >"$Q_LINK" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
