@@ -136,7 +136,12 @@ def cmd_submit(raw_parts: list[str]) -> None:
 
 def maybe_refresh_image() -> None:
     print("refreshing Apptainer image...")
-    run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
+    try:
+        run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "image refresh failed. If your GHCR image is private, set GHCR_TOKEN in .env and rerun `q start`."
+        ) from exc
 
 
 def cmd_worker() -> None:

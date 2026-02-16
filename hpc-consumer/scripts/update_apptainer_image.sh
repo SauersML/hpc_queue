@@ -16,6 +16,7 @@ set +a
 : "${APPTAINER_BIN:=apptainer}"
 : "${APPTAINER_IMAGE:=$REPO_DIR/runtime/hpc-queue-runtime.sif}"
 : "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime:latest}"
+: "${PYTHON_BIN:=python3}"
 
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
 
@@ -23,13 +24,14 @@ TMP_IMAGE="${APPTAINER_IMAGE}.tmp"
 DIGEST_FILE="${APPTAINER_IMAGE}.digest"
 
 resolve_remote_digest() {
-  python3 - "$APPTAINER_OCI_REF" <<'PY'
+  "$PYTHON_BIN" - "$APPTAINER_OCI_REF" <<'PY'
 import base64
 import json
 import os
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 
 ref = sys.argv[1]
 if ref.startswith("docker://"):
@@ -58,8 +60,16 @@ if ghcr_token:
     basic = base64.b64encode(f"{ghcr_user}:{ghcr_token}".encode()).decode()
     token_req.add_header("Authorization", f"Basic {basic}")
 
-with urllib.request.urlopen(token_req, timeout=30) as resp:
-    token_data = json.loads(resp.read().decode("utf-8"))
+try:
+    with urllib.request.urlopen(token_req, timeout=30) as resp:
+        token_data = json.loads(resp.read().decode("utf-8"))
+except urllib.error.HTTPError as exc:
+    if exc.code in (401, 403):
+        raise SystemExit(
+            "registry token unauthorized (401/403); set GHCR_TOKEN (and optionally GHCR_USERNAME) "
+            "if the image is private"
+        )
+    raise
 token = token_data.get("token") or token_data.get("access_token")
 if not token:
     raise SystemExit("failed to obtain registry token")
@@ -79,15 +89,42 @@ manifest_req.add_header(
     ),
 )
 
-with urllib.request.urlopen(manifest_req, timeout=30) as resp:
-    digest = resp.headers.get("Docker-Content-Digest", "").strip()
+try:
+    with urllib.request.urlopen(manifest_req, timeout=30) as resp:
+        digest = resp.headers.get("Docker-Content-Digest", "").strip()
+except urllib.error.HTTPError as exc:
+    if exc.code in (401, 403):
+        raise SystemExit(
+            "manifest unauthorized (401/403); set GHCR_TOKEN (and optionally GHCR_USERNAME) "
+            "if the image is private"
+        )
+    raise
 if not digest:
     raise SystemExit("failed to resolve remote digest")
 print(digest)
 PY
 }
 
-REMOTE_DIGEST="$(resolve_remote_digest)"
+REMOTE_DIGEST=""
+if ! REMOTE_DIGEST="$(resolve_remote_digest)"; then
+  echo "warning: could not resolve remote digest for $APPTAINER_OCI_REF" >&2
+  if [[ -f "$APPTAINER_IMAGE" ]]; then
+    echo "warning: using existing local image at $APPTAINER_IMAGE" >&2
+    exit 0
+  fi
+
+  echo "no local image found; attempting direct pull without digest precheck" >&2
+  if "$APPTAINER_BIN" pull --force "$TMP_IMAGE" "docker://$APPTAINER_OCI_REF"; then
+    mv "$TMP_IMAGE" "$APPTAINER_IMAGE"
+    echo "pulled image without digest precheck: $APPTAINER_IMAGE"
+    exit 0
+  fi
+
+  echo "error: failed to refresh image." >&2
+  echo "if image is private, add GHCR_TOKEN to .env (and GHCR_USERNAME if needed)." >&2
+  exit 1
+fi
+
 LOCAL_DIGEST=""
 if [[ -f "$DIGEST_FILE" ]]; then
   LOCAL_DIGEST="$(cat "$DIGEST_FILE" || true)"
