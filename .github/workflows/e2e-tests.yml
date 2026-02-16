@@ -112,7 +112,6 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.QUEUE_TOKEN || secrets.HPC_QUEUE_KEY }}
       API_KEY: ${{ secrets.API_KEY }}
       WORKER_URL: "https://hpc-queue-producer.sauer354.workers.dev"
-      CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

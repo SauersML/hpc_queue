@@ -5,6 +5,9 @@ import json
 import os
 import urllib.request
 
+DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
+DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
+
 
 def required(name: str) -> str:
     v = os.getenv(name)
@@ -14,8 +17,8 @@ def required(name: str) -> str:
 
 
 def main() -> None:
-    account_id = required("CLOUDFLARE_ACCOUNT_ID")
-    queue_id = required("JOBS_QUEUE_ID")
+    account_id = DEFAULT_CF_ACCOUNT_ID
+    queue_id = DEFAULT_CF_JOBS_QUEUE_ID
     token = required("CLOUDFLARE_API_TOKEN")
     job_id = required("JOB_ID")
 
@@ -23,7 +26,11 @@ def main() -> None:
     payload = {
         "body": {
             "job_id": job_id,
-            "input": {"iterations": 3, "source": "github-actions"},
+            "input": {
+                "exec_mode": "host",
+                "command": "echo cloudflare-e2e-ok",
+                "source": "github-actions",
+            },
         }
     }
 
