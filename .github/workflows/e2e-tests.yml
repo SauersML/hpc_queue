@@ -36,6 +36,7 @@ jobs:
 
       - name: Python compile checks
         run: |
+          python -m py_compile q.py
           python -m py_compile hpc-consumer/hpc_pull_consumer.py
           python -m py_compile laptop-consumer/laptop_pull_results.py
           python -m py_compile containers/app/run.py

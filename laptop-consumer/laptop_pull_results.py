@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Laptop pull consumer for hpc-results queue.
+"""Local pull consumer for hpc-results queue.
 
 Pulls result messages and acknowledges them after printing.
 """
@@ -115,7 +115,7 @@ def process_once(config: Config) -> None:
 
 def main() -> None:
     config = load_config()
-    print("starting laptop results pull consumer")
+    print("starting local results pull consumer")
     while True:
         try:
             process_once(config)
