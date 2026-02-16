@@ -223,10 +223,12 @@ def cmd_submit(raw_parts: list[str], wait: bool) -> None:
         if not job_id:
             raise RuntimeError("submit succeeded but missing job_id")
         if not wait:
+            LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
             json_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
             stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
             stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
             print(f"job queued: {job_id}")
+            print(f"local_results_dir: {LOCAL_RESULTS_DIR.resolve()}")
             print(f"result_json: {json_path}")
             print(f"result_stdout: {stdout_path}")
             print(f"result_stderr: {stderr_path}")
