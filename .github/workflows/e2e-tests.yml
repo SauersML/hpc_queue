@@ -51,6 +51,7 @@ jobs:
           bash -n hpc-consumer/install_cron_watchdog.sh
           bash -n hpc-consumer/remove_cron_watchdog.sh
           bash -n tests/e2e/cloudflare_e2e.sh
+          bash -n tests/e2e/full_e2e_endpoint.sh
 
   local-worker-smoke:
     name: Local Worker Smoke
@@ -140,4 +141,4 @@ jobs:
 
       - name: Run Cloudflare E2E script
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
-        run: tests/e2e/cloudflare_e2e.sh
+        run: tests/e2e/full_e2e_endpoint.sh
