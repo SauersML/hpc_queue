@@ -116,6 +116,8 @@ q logs <job_id>
   - `hpc_running_remote`
   - `hpc_last_heartbeat`
   - `hpc_heartbeat_age_seconds`
+- Default output is human-readable text.
+- Use `q status --json` for raw JSON output.
 
 `q clear jobs|results|all`
 - Purges messages from selected queue(s) using pull+ack loops.

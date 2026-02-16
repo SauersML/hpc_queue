@@ -555,18 +555,35 @@ def cmd_logs(job_id: str) -> None:
         print("(missing)")
 
 
-def cmd_status() -> None:
+def cmd_status(output_json: bool = False) -> None:
+    # Best-effort refresh of local cache/heartbeat from results queue.
+    if os.getenv("CF_QUEUES_API_TOKEN", ""):
+        try:
+            subprocess.run(
+                [sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py")],
+                cwd=str(ROOT),
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
     running = False
     pid = ""
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
         running = process_matches(pid, "hpc_pull_consumer.py")
+        if not running:
+            pid = ""
 
     local_running = False
     local_pid = ""
     if LOCAL_WATCHER_PID_FILE.exists():
         local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
         local_running = process_matches(local_pid, "local_pull_results.py --loop")
+        if not local_running:
+            local_pid = ""
 
     heartbeat = None
     heartbeat_age_seconds = None
@@ -586,19 +603,41 @@ def cmd_status() -> None:
         except Exception:
             heartbeat = None
 
-    print(
-        json.dumps(
-            {
-                "running": running,
-                "pid": pid or None,
-                "local_results_watcher_running": local_running,
-                "local_results_watcher_pid": local_pid or None,
-                "hpc_running_remote": hpc_running_remote,
-                "hpc_last_heartbeat": heartbeat,
-                "hpc_heartbeat_age_seconds": heartbeat_age_seconds,
-            }
-        )
-    )
+    payload = {
+        "running": running,
+        "pid": pid or None,
+        "local_results_watcher_running": local_running,
+        "local_results_watcher_pid": local_pid or None,
+        "hpc_running_remote": hpc_running_remote,
+        "hpc_last_heartbeat": heartbeat,
+        "hpc_heartbeat_age_seconds": heartbeat_age_seconds,
+    }
+    if output_json:
+        print(json.dumps(payload))
+        return
+
+    print(f"host: {os.uname().nodename}")
+    if running:
+        print(f"hpc consumer (this machine): running (pid {pid})")
+    else:
+        print("hpc consumer (this machine): not running")
+
+    if local_running:
+        print(f"local results watcher: running (pid {local_pid})")
+    else:
+        print("local results watcher: not running")
+
+    if hpc_running_remote is True:
+        hb_host = str((heartbeat or {}).get("hostname", "unknown"))
+        hb_pid = str((heartbeat or {}).get("pid", "unknown"))
+        age = int(heartbeat_age_seconds or 0)
+        print(f"remote hpc heartbeat: healthy ({age}s ago, host={hb_host}, pid={hb_pid})")
+    elif hpc_running_remote is False:
+        hb_host = str((heartbeat or {}).get("hostname", "unknown"))
+        age = int(heartbeat_age_seconds or 0)
+        print(f"remote hpc heartbeat: stale ({age}s ago, last_host={hb_host})")
+    else:
+        print("remote hpc heartbeat: unknown (no heartbeat received yet)")
 
 
 def cmd_stop(stop_all: bool) -> None:
@@ -671,7 +710,8 @@ def build_parser() -> argparse.ArgumentParser:
     clear_cmd.add_argument("--max-batches", type=int, default=200, help="maximum pull/ack cycles")
     logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
     logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
-    sub.add_parser("status", help="show worker status")
+    status_cmd = sub.add_parser("status", help="show worker status")
+    status_cmd.add_argument("--json", action="store_true", help="output raw JSON status")
     stop_cmd = sub.add_parser("stop", help="stop worker process")
     stop_cmd.add_argument("--all", action="store_true", help="also clear jobs and results queues")
 
@@ -723,7 +763,7 @@ def main() -> None:
     elif args.command == "logs":
         cmd_logs(args.job_id)
     elif args.command == "status":
-        cmd_status()
+        cmd_status(args.json)
     elif args.command == "stop":
         cmd_stop(args.all)
     else:
