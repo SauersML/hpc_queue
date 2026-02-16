@@ -19,7 +19,8 @@ from urllib import error, request
 
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
-PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
+PID_FILE = ROOT / "hpc-consumer" / "hpc_supervisor.pid"
+WORKER_PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 RESULTS_CACHE_PATH = ROOT / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = ROOT / "local-results"
 LOCAL_WATCHER_PID_FILE = ROOT / "local-consumer" / "local_results_watcher.pid"
@@ -628,9 +629,16 @@ def cmd_status(output_json: bool = False) -> None:
     pid = ""
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
-        running = process_matches(pid, "hpc_pull_consumer.py")
+        running = process_matches(pid, "hpc_supervisor.py")
         if not running:
             pid = ""
+    worker_pid = ""
+    worker_running = False
+    if WORKER_PID_FILE.exists():
+        worker_pid = WORKER_PID_FILE.read_text(encoding="utf-8").strip()
+        worker_running = process_matches(worker_pid, "hpc_pull_consumer.py")
+        if not worker_running:
+            worker_pid = ""
 
     local_running = False
     local_pid = ""
@@ -685,6 +693,8 @@ def cmd_status(output_json: bool = False) -> None:
     payload = {
         "running": running,
         "pid": pid or None,
+        "worker_running": worker_running,
+        "worker_pid": worker_pid or None,
         "local_results_watcher_running": local_running,
         "local_results_watcher_pid": local_pid or None,
         "hpc_running_remote": hpc_running_remote,
@@ -697,7 +707,10 @@ def cmd_status(output_json: bool = False) -> None:
 
     print(f"host: {os.uname().nodename}")
     if running:
-        print(f"hpc consumer (this machine): running (pid {pid})")
+        if worker_running:
+            print(f"hpc consumer (this machine): running (supervisor pid {pid}, worker pid {worker_pid})")
+        else:
+            print(f"hpc consumer (this machine): restarting worker (supervisor pid {pid})")
     else:
         print("hpc consumer (this machine): not running")
 
@@ -722,8 +735,12 @@ def cmd_status(output_json: bool = False) -> None:
 def cmd_stop(stop_all: bool) -> None:
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
-        if process_matches(pid, "hpc_pull_consumer.py"):
+        if process_matches(pid, "hpc_supervisor.py"):
             subprocess.run(["kill", pid], check=False)
+    if WORKER_PID_FILE.exists():
+        worker_pid = WORKER_PID_FILE.read_text(encoding="utf-8").strip()
+        if process_matches(worker_pid, "hpc_pull_consumer.py"):
+            subprocess.run(["kill", worker_pid], check=False)
     if LOCAL_WATCHER_PID_FILE.exists():
         local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
         if process_matches(local_pid, "local_pull_results.py --loop"):
