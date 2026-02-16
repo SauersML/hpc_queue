@@ -28,6 +28,9 @@ HPC_STATUS_PATH = ROOT / "local-consumer" / "hpc_status.json"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
 DEFAULT_INLINE_FILE_MAX_BYTES = 64 * 1024
+DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
+DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
+DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 
 
 def load_dotenv(path: Path) -> None:
@@ -46,6 +49,30 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"Missing required env var: {name}")
     return value
+
+
+def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    req = request.Request(
+        url=url,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def parse_messages(resp: dict[str, Any]) -> list[dict[str, Any]]:
+    result = resp.get("result", {})
+    if isinstance(result, dict):
+        msgs = result.get("messages", [])
+        return msgs if isinstance(msgs, list) else []
+    if isinstance(result, list):
+        return result
+    return []
 
 
 def run(cmd: list[str], cwd: Path | None = None) -> None:
@@ -358,6 +385,68 @@ def cmd_results() -> None:
     run([sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py")], cwd=ROOT)
 
 
+def clear_single_queue(
+    queue_label: str,
+    queue_id: str,
+    account_id: str,
+    token: str,
+    batch_size: int,
+    max_batches: int,
+) -> int:
+    base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/queues/{queue_id}/messages"
+    total_acked = 0
+    for _ in range(max_batches):
+        pulled = cf_post(
+            url=f"{base}/pull",
+            token=token,
+            payload={
+                "batch_size": batch_size,
+                "visibility_timeout": 120000,
+            },
+        )
+        messages = parse_messages(pulled)
+        if not messages:
+            break
+        acks = [{"lease_id": m.get("lease_id")} for m in messages if m.get("lease_id")]
+        if acks:
+            cf_post(
+                url=f"{base}/ack",
+                token=token,
+                payload={"acks": acks, "retries": []},
+            )
+            total_acked += len(acks)
+    print(json.dumps({"queue": queue_label, "cleared_messages": total_acked}))
+    return total_acked
+
+
+def cmd_clear(target: str, batch_size: int, max_batches: int) -> None:
+    token = require_env("CF_QUEUES_API_TOKEN")
+    account_id = os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID)
+    jobs_queue_id = os.getenv("CF_JOBS_QUEUE_ID", DEFAULT_CF_JOBS_QUEUE_ID)
+    results_queue_id = os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID)
+
+    total = 0
+    if target in {"jobs", "all"}:
+        total += clear_single_queue(
+            queue_label="jobs",
+            queue_id=jobs_queue_id,
+            account_id=account_id,
+            token=token,
+            batch_size=batch_size,
+            max_batches=max_batches,
+        )
+    if target in {"results", "all"}:
+        total += clear_single_queue(
+            queue_label="results",
+            queue_id=results_queue_id,
+            account_id=account_id,
+            token=token,
+            batch_size=batch_size,
+            max_batches=max_batches,
+        )
+    print(json.dumps({"target": target, "total_cleared_messages": total}))
+
+
 def cmd_logs(job_id: str) -> None:
     job_dir = ROOT / "hpc-consumer" / "results" / job_id
     meta_path = job_dir / "meta.json"
@@ -512,7 +601,7 @@ def cmd_status() -> None:
     )
 
 
-def cmd_stop() -> None:
+def cmd_stop(stop_all: bool) -> None:
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
         if process_matches(pid, "hpc_pull_consumer.py"):
@@ -521,6 +610,8 @@ def cmd_stop() -> None:
         local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
         if process_matches(local_pid, "local_pull_results.py --loop"):
             subprocess.run(["kill", local_pid], check=False)
+    if stop_all:
+        cmd_clear(target="all", batch_size=100, max_batches=200)
     print("stop signal sent")
 
 
@@ -574,10 +665,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("start", help="start compute worker")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
+    clear_cmd = sub.add_parser("clear", help="clear messages from jobs/results queues")
+    clear_cmd.add_argument("target", choices=["jobs", "results", "all"], help="which queue(s) to clear")
+    clear_cmd.add_argument("--batch-size", type=int, default=100, help="messages per pull while clearing")
+    clear_cmd.add_argument("--max-batches", type=int, default=200, help="maximum pull/ack cycles")
     logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
     logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
     sub.add_parser("status", help="show worker status")
-    sub.add_parser("stop", help="stop worker process")
+    stop_cmd = sub.add_parser("stop", help="stop worker process")
+    stop_cmd.add_argument("--all", action="store_true", help="also clear jobs and results queues")
 
     return parser
 
@@ -599,7 +695,7 @@ def normalize_wait_flag(argv: list[str]) -> list[str]:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "logs", "status", "stop"}
+    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "status", "stop"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
@@ -622,12 +718,14 @@ def main() -> None:
         cmd_worker()
     elif args.command == "results":
         cmd_results()
+    elif args.command == "clear":
+        cmd_clear(args.target, args.batch_size, args.max_batches)
     elif args.command == "logs":
         cmd_logs(args.job_id)
     elif args.command == "status":
         cmd_status()
     elif args.command == "stop":
-        cmd_stop()
+        cmd_stop(args.all)
     else:
         parser.error("unknown command")
 

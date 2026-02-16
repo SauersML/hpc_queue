@@ -108,6 +108,20 @@ Stop worker:
 q stop
 ```
 
+Stop local processes and clear both queues:
+
+```bash
+q stop --all
+```
+
+Clear queues directly:
+
+```bash
+q clear jobs
+q clear results
+q clear all
+```
+
 ## How worker image updates happen
 
 `q start` resolves the remote image digest first.
