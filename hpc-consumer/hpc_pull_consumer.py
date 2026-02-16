@@ -166,11 +166,33 @@ def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def decode_message_body(body: Any) -> dict[str, Any]:
+    return decode_message_body_with_content_type(body=body, content_type="")
+
+
+def decode_message_body_with_content_type(body: Any, content_type: str) -> dict[str, Any]:
     if isinstance(body, dict):
         return body
 
     if isinstance(body, str):
-        # Pull consumers often receive json content base64-encoded.
+        ct = content_type.strip().lower()
+        # For json content, body may be base64-encoded in pull responses.
+        if ct in {"json", ""}:
+            try:
+                decoded = base64.b64decode(body)
+                return json.loads(decoded.decode("utf-8"))
+            except Exception:
+                try:
+                    return json.loads(body)
+                except Exception as exc:
+                    raise ValueError(f"Unable to decode JSON message body: {body}") from exc
+        if ct == "text":
+            try:
+                return json.loads(body)
+            except Exception as exc:
+                raise ValueError(f"Unsupported text message body; expected JSON object: {body}") from exc
+        if ct == "bytes":
+            raise ValueError("Unsupported bytes message body for jobs queue; expected JSON content type")
+
         try:
             decoded = base64.b64decode(body)
             return json.loads(decoded.decode("utf-8"))
@@ -231,6 +253,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     meta_path = job_dir / "meta.json"
     stdout_path = job_dir / "stdout.log"
     stderr_path = job_dir / "stderr.log"
+    apptainer_stdout_path = job_dir / "apptainer.stdout.log"
+    apptainer_stderr_path = job_dir / "apptainer.stderr.log"
 
     job_input = job.get("input", {})
     if not isinstance(job_input, dict):
@@ -256,7 +280,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])
 
     started = datetime.now(timezone.utc).isoformat()
-    with stdout_path.open("w", encoding="utf-8") as stdout_fp, stderr_path.open(
+    with apptainer_stdout_path.open("w", encoding="utf-8") as stdout_fp, apptainer_stderr_path.open(
         "w", encoding="utf-8"
     ) as stderr_fp:
         proc = subprocess.run(cmd, stdout=stdout_fp, stderr=stderr_fp, text=True)
@@ -280,9 +304,11 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "staged_files": staged_files,
         "synced_repos": synced_repos,
         "stdout_tail": tail_text(stdout_path),
-        "stderr_tail": tail_text(stderr_path),
+        "stderr_tail": (tail_text(apptainer_stderr_path) + tail_text(stderr_path))[-8000:],
         "stdout_path": str(stdout_path.resolve()),
         "stderr_path": str(stderr_path.resolve()),
+        "apptainer_stdout_path": str(apptainer_stdout_path.resolve()),
+        "apptainer_stderr_path": str(apptainer_stderr_path.resolve()),
         "input_path": str(input_path.resolve()),
         "output_path": str(output_path.resolve()),
     }
@@ -330,7 +356,7 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
     ) as stderr_fp:
         proc = subprocess.run(
             ["/bin/bash", "-lc", command],
-            cwd=str(results_dir.resolve()),
+            cwd=str(job_dir.resolve()),
             stdout=stdout_fp,
             stderr=stderr_fp,
             text=True,
@@ -347,7 +373,7 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
         "job_id": job_id,
         "exec_mode": "host",
         "command": command,
-        "workdir": str(results_dir.resolve()),
+        "workdir": str(job_dir.resolve()),
         "status": "completed" if proc.returncode == 0 else "failed",
         "started_at": started,
         "finished_at": finished,
@@ -448,7 +474,7 @@ def process_once(config: Config) -> None:
         token=config.api_token,
         payload={
             "batch_size": DEFAULT_PULL_BATCH_SIZE,
-            "visibility_timeout": config.visibility_timeout_ms,
+            "visibility_timeout_ms": config.visibility_timeout_ms,
         },
     )
 
@@ -473,7 +499,10 @@ def process_once(config: Config) -> None:
 
         job_id = "unknown"
         try:
-            job = decode_message_body(message.get("body"))
+            job = decode_message_body_with_content_type(
+                body=message.get("body"),
+                content_type=str(message.get("content_type", "")),
+            )
             job_id = str(job.get("job_id", "unknown"))
             job_input = job.get("input", {})
             exec_mode = (

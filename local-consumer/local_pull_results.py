@@ -7,6 +7,7 @@ Pulls one batch of result messages and acknowledges them after printing.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import time
@@ -95,13 +96,44 @@ def parse_messages(resp: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def decode_body(body: Any, content_type: str) -> Any:
+    if not isinstance(body, str):
+        return body
+    ct = content_type.strip().lower()
+    if ct in {"json", "bytes"}:
+        try:
+            decoded = base64.b64decode(body)
+        except Exception:
+            return body
+        if ct == "json":
+            try:
+                return json.loads(decoded.decode("utf-8"))
+            except Exception:
+                return body
+        return decoded
+    if ct == "text":
+        try:
+            return json.loads(body)
+        except Exception:
+            return body
+    try:
+        # Fallback: try json base64 first, then plain json.
+        decoded = base64.b64decode(body)
+        return json.loads(decoded.decode("utf-8"))
+    except Exception:
+        try:
+            return json.loads(body)
+        except Exception:
+            return body
+
+
 def process_once(config: Config) -> None:
     pulled = cf_post(
         url=f"{config.results_api_base}/pull",
         token=config.api_token,
         payload={
             "batch_size": config.batch_size,
-            "visibility_timeout": config.visibility_timeout_ms,
+            "visibility_timeout_ms": config.visibility_timeout_ms,
         },
     )
 
@@ -117,14 +149,15 @@ def process_once(config: Config) -> None:
         if not lease_id:
             continue
 
-        body = message.get("body")
-        if isinstance(body, str):
-            try:
-                body = json.loads(body)
-            except Exception:
-                pass
+        body = decode_body(message.get("body"), str(message.get("content_type", "")))
 
-        body_json = json.dumps(body, separators=(",", ":"))
+        cache_body = body
+        if isinstance(body, (bytes, bytearray)):
+            cache_body = {
+                "_raw_bytes_b64": base64.b64encode(bytes(body)).decode("ascii"),
+                "content_type": str(message.get("content_type", "")),
+            }
+        body_json = json.dumps(cache_body, separators=(",", ":"))
         print(body_json)
         with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
             cache_fp.write(body_json + "\n")

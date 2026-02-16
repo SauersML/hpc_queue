@@ -367,7 +367,7 @@ def maybe_refresh_image() -> None:
         run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            "image refresh failed. verify APPTAINER_SIF_URL/APPTAINER_SIF_SHA256_URL are reachable."
+            "image refresh failed. verify GitHub release SIF URLs are reachable."
         ) from exc
 
 
@@ -401,7 +401,7 @@ def clear_single_queue(
             token=token,
             payload={
                 "batch_size": batch_size,
-                "visibility_timeout": 120000,
+                "visibility_timeout_ms": 120000,
             },
         )
         messages = parse_messages(pulled)
@@ -448,7 +448,12 @@ def cmd_clear(target: str, batch_size: int, max_batches: int) -> None:
 
 
 def cmd_logs(job_id: str) -> None:
-    job_dir = ROOT / "hpc-consumer" / "results" / job_id
+    job_dir = ROOT / "results" / job_id
+    if not job_dir.exists():
+        # Backward compatibility with older layout.
+        legacy_dir = ROOT / "hpc-consumer" / "results" / job_id
+        if legacy_dir.exists():
+            job_dir = legacy_dir
     meta_path = job_dir / "meta.json"
     stdout_path = job_dir / "stdout.log"
     stderr_path = job_dir / "stderr.log"
@@ -804,7 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     clear_cmd.add_argument("--batch-size", type=int, default=100, help="messages per pull while clearing")
     clear_cmd.add_argument("--max-batches", type=int, default=200, help="maximum pull/ack cycles")
     logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
-    logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
+    logs.add_argument("job_id", help="job id to inspect from local results artifacts/cache")
     job = sub.add_parser("job", help="show last known status for one job from local cache")
     job.add_argument("job_id", help="job id to inspect")
     status_cmd = sub.add_parser("status", help="show worker status")
