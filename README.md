@@ -197,9 +197,3 @@ For container jobs, the HPC consumer now syncs these repos before each job and b
 - `/reagle`
 
 This means jobs see latest refs (default `main`) without waiting for a container rebuild.
-
-Optional env overrides (on HPC):
-- `SYNC_EXTERNAL_REPOS=1|0` (default `1`)
-- `EXTERNAL_REPO_SYNC_STRICT=1|0` (default `1`)
-- `GNOMON_REPO_URL`, `GNOMON_REPO_REF`
-- `REAGLE_REPO_URL`, `REAGLE_REPO_REF`
