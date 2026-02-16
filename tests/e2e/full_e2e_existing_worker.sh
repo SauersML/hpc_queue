@@ -42,11 +42,7 @@ PYTHONUNBUFFERED=1 \
 CF_QUEUES_API_TOKEN="$CLOUDFLARE_API_TOKEN" \
 CF_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
 CF_RESULTS_QUEUE_ID="$CF_RESULTS_QUEUE_ID" \
-RESULTS_POLL_INTERVAL_SECONDS=1 \
-python3 "$ROOT_DIR/laptop-consumer/laptop_pull_results.py" > "$RUNTIME_DIR/laptop.log" 2>&1 &
-LAPTOP_PID=$!
-sleep 8
-kill "$LAPTOP_PID" >/dev/null 2>&1 || true
+python3 "$ROOT_DIR/laptop-consumer/laptop_pull_results.py" > "$RUNTIME_DIR/laptop.log" 2>&1
 cat "$RUNTIME_DIR/laptop.log"
 
 grep -q "$JOB_ID" "$RUNTIME_DIR/laptop.log"

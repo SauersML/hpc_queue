@@ -167,6 +167,45 @@ def cmd_results() -> None:
     run([sys.executable, str(ROOT / "laptop-consumer" / "laptop_pull_results.py")], cwd=ROOT)
 
 
+def cmd_logs(job_id: str) -> None:
+    job_dir = ROOT / "hpc-consumer" / "results" / job_id
+    meta_path = job_dir / "meta.json"
+    stdout_path = job_dir / "stdout.log"
+    stderr_path = job_dir / "stderr.log"
+
+    if not job_dir.exists():
+        raise RuntimeError(f"No local results for job_id={job_id} at {job_dir}")
+
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        print(json.dumps(
+            {
+                "job_id": meta.get("job_id"),
+                "status": meta.get("status"),
+                "returncode": meta.get("returncode"),
+                "started_at": meta.get("started_at"),
+                "finished_at": meta.get("finished_at"),
+            },
+            indent=2,
+        ))
+    else:
+        print(json.dumps({"job_id": job_id, "warning": "meta.json not found"}, indent=2))
+
+    if stdout_path.exists():
+        print("\n=== stdout ===")
+        print(stdout_path.read_text(encoding="utf-8"), end="")
+    else:
+        print("\n=== stdout ===")
+        print("(missing)")
+
+    if stderr_path.exists():
+        print("\n=== stderr ===")
+        print(stderr_path.read_text(encoding="utf-8"), end="")
+    else:
+        print("\n=== stderr ===")
+        print("(missing)")
+
+
 def cmd_status() -> None:
     running = False
     pid = ""
@@ -212,7 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--worker-url", default=DEFAULT_WORKER_URL, help="Worker base URL")
     sub.add_parser("start", help="start compute worker and install cron watchdog")
     sub.add_parser("worker", help="deprecated alias for start")
-    sub.add_parser("results", help="pull results on local machine")
+    sub.add_parser("results", help="pull one batch of results on local machine")
+    logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
+    logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
     sub.add_parser("status", help="show worker/cron status")
     sub.add_parser("stop", help="stop worker process")
 
@@ -222,7 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "login", "start", "worker", "results", "status", "stop"}
+    known_commands = {"submit", "login", "start", "worker", "results", "logs", "status", "stop"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
@@ -241,6 +282,8 @@ def main() -> None:
         cmd_worker()
     elif args.command == "results":
         cmd_results()
+    elif args.command == "logs":
+        cmd_logs(args.job_id)
     elif args.command == "status":
         cmd_status()
     elif args.command == "stop":

@@ -12,9 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-import queue as queue_mod
 import subprocess
-import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -44,8 +42,6 @@ class Config:
     apptainer_bin: str = "apptainer"
     apptainer_bind: str = ""
     container_cmd: str = "python /app/run.py"
-    stream_logs: bool = True
-    max_log_lines: int = 1000
 
     @property
     def jobs_api_base(self) -> str:
@@ -86,8 +82,6 @@ def load_config() -> Config:
             "CONTAINER_CMD",
             "python /app/run.py",
         ),
-        stream_logs=os.getenv("STREAM_LOG_EVENTS", "1").lower() not in {"0", "false", "no"},
-        max_log_lines=int(os.getenv("MAX_LOG_LINES", "1000")),
     )
 
 
@@ -134,6 +128,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     input_path = job_dir / "input.json"
     output_path = job_dir / "output.json"
     meta_path = job_dir / "meta.json"
+    stdout_path = job_dir / "stdout.log"
+    stderr_path = job_dir / "stderr.log"
 
     input_path.write_text(
         json.dumps({"job_id": job_id, "input": job.get("input", {})}),
@@ -151,61 +147,17 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])
 
     started = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
-    line_events = 0
-
-    q: queue_mod.Queue[tuple[str, str]] = queue_mod.Queue()
-
-    def pump(stream: Any, name: str) -> None:
-        try:
-            for line in iter(stream.readline, ""):
-                q.put((name, line.rstrip("\n")))
-        finally:
-            try:
-                stream.close()
-            except Exception:
-                pass
-
-    t_out = threading.Thread(target=pump, args=(proc.stdout, "stdout"), daemon=True)
-    t_err = threading.Thread(target=pump, args=(proc.stderr, "stderr"), daemon=True)
-    t_out.start()
-    t_err.start()
-
-    while t_out.is_alive() or t_err.is_alive() or not q.empty():
-        try:
-            stream_name, line = q.get(timeout=0.2)
-        except queue_mod.Empty:
-            continue
-        if stream_name == "stdout":
-            stdout_lines.append(line)
-        else:
-            stderr_lines.append(line)
-
-        if config.stream_logs and line_events < config.max_log_lines:
-            enqueue_result(
-                config=config,
-                job_id=job_id,
-                status="running",
-                result_pointer="",
-                extra={
-                    "event_type": "log",
-                    "stream": stream_name,
-                    "line": line,
-                },
-            )
-            line_events += 1
-
-    proc.wait()
+    with stdout_path.open("w", encoding="utf-8") as stdout_fp, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr_fp:
+        proc = subprocess.run(cmd, stdout=stdout_fp, stderr=stderr_fp, text=True)
     finished = datetime.now(timezone.utc).isoformat()
+
+    def tail_text(path: Path, chars: int = 8000) -> str:
+        try:
+            return path.read_text(encoding="utf-8")[-chars:]
+        except Exception:
+            return ""
 
     meta = {
         "job_id": job_id,
@@ -213,8 +165,10 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "started_at": started,
         "finished_at": finished,
         "returncode": proc.returncode,
-        "stdout": "\n".join(stdout_lines)[-8000:],
-        "stderr": "\n".join(stderr_lines)[-8000:],
+        "stdout_tail": tail_text(stdout_path),
+        "stderr_tail": tail_text(stderr_path),
+        "stdout_path": str(stdout_path.resolve()),
+        "stderr_path": str(stderr_path.resolve()),
         "input_path": str(input_path.resolve()),
         "output_path": str(output_path.resolve()),
     }
@@ -222,7 +176,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"apptainer command failed for {job_id} rc={proc.returncode}: {proc.stderr[-500:]}"
+            f"apptainer command failed for {job_id} rc={proc.returncode}: {meta['stderr_tail'][-500:]}"
         )
 
     if not output_path.exists():

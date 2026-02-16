@@ -16,16 +16,7 @@ Single CLI: `q`
 Install `q` command:
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-ln -sf /Users/user/hpc_queue/q.py "$HOME/.local/bin/q"
-chmod +x /Users/user/hpc_queue/q.py
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-If needed, add this to your shell profile (`~/.zshrc` or `~/.bashrc`):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/SauersML/hpc_queue/main/install.sh | bash
 ```
 
 Run one command to configure:
@@ -50,13 +41,19 @@ Submit raw JSON input instead:
 q submit --json '{"command":"ls -la"}'
 ```
 
-Pull results and live logs:
+Pull one batch of result messages:
 
 ```bash
 q results
 ```
 
-`q results` prints streaming log events (`status=running`) and final completion message with `result_pointer`.
+View job logs on demand:
+
+```bash
+q logs <job_id>
+```
+
+`q logs` reads saved `stdout.log` and `stderr.log` from `hpc-consumer/results/<job_id>/`.
 
 ## HPC node
 

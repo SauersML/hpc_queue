@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Local pull consumer for hpc-results queue.
+"""Local pull reader for hpc-results queue.
 
-Pulls result messages and acknowledges them after printing.
+Pulls one batch of result messages and acknowledges them after printing.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import dataclass
 from typing import Any
 from urllib import request
@@ -24,7 +23,6 @@ class Config:
     api_token: str
     batch_size: int = 10
     visibility_timeout_ms: int = 120000
-    poll_interval_seconds: float = 2.0
 
     @property
     def results_api_base(self) -> str:
@@ -47,7 +45,6 @@ def load_config() -> Config:
         api_token=req("CF_QUEUES_API_TOKEN"),
         batch_size=int(os.getenv("RESULTS_BATCH_SIZE", "10")),
         visibility_timeout_ms=int(os.getenv("RESULTS_VISIBILITY_TIMEOUT_MS", "120000")),
-        poll_interval_seconds=float(os.getenv("RESULTS_POLL_INTERVAL_SECONDS", "2")),
     )
 
 
@@ -115,13 +112,11 @@ def process_once(config: Config) -> None:
 
 def main() -> None:
     config = load_config()
-    print("starting local results pull consumer")
-    while True:
-        try:
-            process_once(config)
-        except Exception as exc:
-            print(f"results poll error: {exc}")
-        time.sleep(config.poll_interval_seconds)
+    try:
+        process_once(config)
+    except Exception as exc:
+        print(f"results pull error: {exc}")
+        raise
 
 
 if __name__ == "__main__":
