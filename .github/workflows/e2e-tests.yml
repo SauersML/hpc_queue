@@ -52,7 +52,7 @@ jobs:
           bash -n hpc-consumer/install_cron_watchdog.sh
           bash -n hpc-consumer/remove_cron_watchdog.sh
           bash -n tests/e2e/cloudflare_e2e.sh
-          bash -n tests/e2e/full_e2e_endpoint.sh
+          bash -n tests/e2e/full_e2e_existing_worker.sh
 
   local-worker-smoke:
     name: Local Worker Smoke
@@ -113,7 +113,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
-      CLOUDFLARE_DEPLOY_API_TOKEN: ${{ secrets.HPC_WORKERS_DEPLOY_KEY }}
+      WORKER_API_KEY: ${{ secrets.API_KEY }}
+      WORKER_URL: "https://hpc-queue-producer.sauer354.workers.dev"
       CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
     steps:
       - name: Checkout
@@ -135,12 +136,12 @@ jobs:
         run: npm ci
         working-directory: producer-worker
 
-      - name: Skip when HPC_QUEUE_KEY is not set
-        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+      - name: Skip when required secrets are missing
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.WORKER_API_KEY == '' }}
         run: |
-          echo "HPC_QUEUE_KEY secret not set; skipping Cloudflare E2E."
+          echo "Missing HPC_QUEUE_KEY or API_KEY secret; skipping Cloudflare E2E."
           exit 0
 
       - name: Run Cloudflare E2E script
-        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
-        run: tests/e2e/full_e2e_endpoint.sh
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.WORKER_API_KEY != '' }}
+        run: tests/e2e/full_e2e_existing_worker.sh
