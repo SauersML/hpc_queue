@@ -6,6 +6,7 @@ RUNTIME_DIR="${RUNNER_TEMP:-/tmp}"
 
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${CLOUDFLARE_ACCOUNT_ID:?CLOUDFLARE_ACCOUNT_ID is required}"
+: "${CLOUDFLARE_DEPLOY_API_TOKEN:=${CLOUDFLARE_API_TOKEN}}"
 
 RUN_ID="${GITHUB_RUN_ID:-local}"
 ATTEMPT="${GITHUB_RUN_ATTEMPT:-0}"
@@ -19,7 +20,8 @@ TMP_WORKER_DIR="$(mktemp -d)"
 cleanup() {
   set +e
   cd "$ROOT_DIR/producer-worker"
-  npx wrangler delete "$WORKER_NAME" --force --config "$TMP_WORKER_DIR/wrangler.toml" >/dev/null 2>&1 || true
+  CLOUDFLARE_API_TOKEN="$CLOUDFLARE_DEPLOY_API_TOKEN" \
+    npx wrangler delete "$WORKER_NAME" --force --config "$TMP_WORKER_DIR/wrangler.toml" >/dev/null 2>&1 || true
   npx wrangler queues delete "$JOBS_QUEUE" --force >/dev/null 2>&1 || true
   npx wrangler queues delete "$RESULTS_QUEUE" --force >/dev/null 2>&1 || true
   rm -rf "$TMP_WORKER_DIR"
@@ -104,7 +106,12 @@ export default {
 JS
 
 DEPLOY_LOG="$RUNTIME_DIR/ci-worker-deploy.log"
-npx wrangler deploy --config "$TMP_WORKER_DIR/wrangler.toml" > "$DEPLOY_LOG" 2>&1
+if ! CLOUDFLARE_API_TOKEN="$CLOUDFLARE_DEPLOY_API_TOKEN" \
+  npx wrangler deploy --config "$TMP_WORKER_DIR/wrangler.toml" > "$DEPLOY_LOG" 2>&1; then
+  cat "$DEPLOY_LOG"
+  echo "worker deploy failed: token likely missing Workers deploy permissions"
+  exit 1
+fi
 cat "$DEPLOY_LOG"
 
 WORKER_URL="$(grep -Eo 'https://[^ ]+\.workers\.dev' "$DEPLOY_LOG" | head -n1 || true)"

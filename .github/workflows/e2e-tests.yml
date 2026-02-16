@@ -112,6 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.HPC_QUEUE_KEY }}
+      CLOUDFLARE_DEPLOY_API_TOKEN: ${{ secrets.HPC_WORKERS_DEPLOY_KEY }}
       CLOUDFLARE_ACCOUNT_ID: "59908b351c3a3321ff84dd2d78bf0b42"
     steps:
       - name: Checkout
