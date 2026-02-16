@@ -23,8 +23,8 @@ from urllib import request
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
-DEFAULT_APPTAINER_IMAGE = "/Users/user/hpc_queue/runtime/hpc-queue-runtime.sif"
 ROOT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
 
 
 @dataclass

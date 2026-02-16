@@ -11,6 +11,8 @@ __pycache__/
 # Env
 .env
 *.local
+hpc-consumer/results/*
+!hpc-consumer/results/.gitkeep
 
 # Tooling
 .wrangler/
