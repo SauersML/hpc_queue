@@ -44,26 +44,11 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     && micromamba create -y -p "${MAMBA_TOOLS_ENV}" -c conda-forge -c bioconda plink2 gctb
 
 RUN set -eux; \
-    if ! command -v plink2 >/dev/null 2>&1; then \
-      CANDIDATE="$(find /opt/conda -type f -name plink2 2>/dev/null | head -n 1 || true)"; \
-      if [ -n "$CANDIDATE" ]; then \
-        install -m 0755 "$CANDIDATE" /usr/local/bin/plink2; \
-      fi; \
-    fi; \
-    if ! command -v plink2 >/dev/null 2>&1; then \
-      for URL in \
-        "https://s3.amazonaws.com/plink2-assets/plink2_linux_x86_64_20241022.zip" \
-        "https://s3.amazonaws.com/plink2-assets/alpha6/plink2_linux_x86_64.zip"; do \
-        if curl -fsSL "$URL" -o /tmp/plink2.zip; then \
-          break; \
-        fi; \
-      done; \
-      test -f /tmp/plink2.zip; \
-      rm -rf /tmp/plink2 && mkdir -p /tmp/plink2; \
-      unzip -o /tmp/plink2.zip -d /tmp/plink2; \
-      install -m 0755 /tmp/plink2/plink2 /usr/local/bin/plink2; \
-      rm -rf /tmp/plink2 /tmp/plink2.zip; \
-    fi
+    wget https://s3.amazonaws.com/plink2-assets/plink2_linux_avx2_20260110.zip -O /tmp/plink2.zip; \
+    rm -rf /tmp/plink2 && mkdir -p /tmp/plink2; \
+    unzip -o /tmp/plink2.zip -d /tmp/plink2; \
+    install -m 0755 /tmp/plink2/plink2 /usr/local/bin/plink2; \
+    rm -rf /tmp/plink2 /tmp/plink2.zip
 
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
     && rustup update stable \
