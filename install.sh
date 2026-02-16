@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="${Q_REPO_URL:-https://github.com/SauersML/hpc_queue.git}"
-REPO_BRANCH="${Q_REPO_BRANCH:-main}"
-INSTALL_DIR="${Q_INSTALL_DIR:-$HOME/.local/share/hpc_queue}"
-BIN_DIR="${Q_BIN_DIR:-$HOME/.local/bin}"
+REPO_URL="https://github.com/SauersML/hpc_queue.git"
+REPO_BRANCH="main"
+INSTALL_DIR="$HOME/.local/share/hpc_queue"
+BIN_DIR="$HOME/.local/bin"
 Q_LINK="$BIN_DIR/q"
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
@@ -68,15 +68,6 @@ PY
 }
 
 pick_python() {
-  if [[ -n "\${Q_PYTHON:-}" ]] && command -v "\$Q_PYTHON" >/dev/null 2>&1; then
-    local qpy
-    qpy="\$(command -v "\$Q_PYTHON")"
-    if supports_python "\$qpy"; then
-      echo "\$qpy"
-      return 0
-    fi
-  fi
-
   local candidates=(python3.12 python3.11 python3.10 python3)
   local c
   for c in "\${candidates[@]}"; do
@@ -120,7 +111,6 @@ if [[ -z "\$PYTHON_BIN" ]]; then
   echo "q requires Python 3.10+." >&2
   echo "Set one of these up, then re-run q:" >&2
   echo "  module load python3/3.10.9_anaconda2023.03_libmamba" >&2
-  echo "or set Q_PYTHON to a Python 3.10+ executable." >&2
   exit 1
 fi
 
@@ -146,7 +136,7 @@ echo "Run:"
 echo "  q --help"
 echo "  q login"
 
-if [[ "$is_sourced" -eq 0 && -t 1 && -z "${Q_INSTALL_NO_REEXEC:-}" ]]; then
+if [[ "$is_sourced" -eq 0 && -t 1 ]]; then
   echo
   echo "Opening a fresh login shell so q is available immediately..."
   exec "${SHELL:-/bin/bash}" -l

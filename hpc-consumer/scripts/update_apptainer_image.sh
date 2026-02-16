@@ -9,13 +9,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_DIR"
 
-set -a
-source .env
-set +a
-
-: "${APPTAINER_IMAGE:=$REPO_DIR/runtime/hpc-queue-runtime.sif}"
-: "${APPTAINER_SIF_URL:=https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif}"
-: "${APPTAINER_SIF_SHA256_URL:=https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif.sha256}"
+APPTAINER_IMAGE="$REPO_DIR/runtime/hpc-queue-runtime.sif"
+APPTAINER_SIF_URL="https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif"
+APPTAINER_SIF_SHA256_URL="https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif.sha256"
 
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
 

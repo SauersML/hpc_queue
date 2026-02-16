@@ -32,6 +32,8 @@ DEFAULT_INLINE_FILE_MAX_BYTES = 64 * 1024
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+DEFAULT_RESULTS_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_HPC_HEARTBEAT_MAX_AGE_SECONDS = 90.0
 
 
 def load_dotenv(path: Path) -> None:
@@ -136,12 +138,9 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
         final_api_key = secrets.token_hex(24)
         generated = True
 
-    worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL)
     updates = {
         "CF_QUEUES_API_TOKEN": final_queue_token,
         "API_KEY": final_api_key,
-        "WORKER_URL": worker_url,
-        "PYTHON_BIN": sys.executable,
     }
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
@@ -170,7 +169,7 @@ def build_run_file_input(
     if not source.exists() or not source.is_file():
         raise RuntimeError(f"run-file source does not exist or is not a file: {source}")
 
-    max_bytes = int(os.getenv("INLINE_FILE_MAX_BYTES", str(DEFAULT_INLINE_FILE_MAX_BYTES)))
+    max_bytes = DEFAULT_INLINE_FILE_MAX_BYTES
     raw = source.read_bytes()
     if len(raw) > max_bytes:
         raise RuntimeError(
@@ -234,7 +233,7 @@ def write_local_result_file(event: dict[str, Any]) -> Path | None:
 
 def wait_for_local_result_file(job_id: str) -> Path:
     result_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
-    poll_seconds = float(os.getenv("RESULTS_POLL_INTERVAL_SECONDS", "2"))
+    poll_seconds = DEFAULT_RESULTS_POLL_INTERVAL_SECONDS
     last_heartbeat = time.monotonic()
     while True:
         if result_path.exists():
@@ -290,7 +289,7 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
     ensure_local_watcher_running()
-    worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
+    worker_url = DEFAULT_WORKER_URL.rstrip("/")
 
     req = request.Request(
         url=f"{worker_url}/jobs",
@@ -422,9 +421,9 @@ def clear_single_queue(
 
 def cmd_clear(target: str, batch_size: int, max_batches: int) -> None:
     token = require_env("CF_QUEUES_API_TOKEN")
-    account_id = os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID)
-    jobs_queue_id = os.getenv("CF_JOBS_QUEUE_ID", DEFAULT_CF_JOBS_QUEUE_ID)
-    results_queue_id = os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID)
+    account_id = DEFAULT_CF_ACCOUNT_ID
+    jobs_queue_id = DEFAULT_CF_JOBS_QUEUE_ID
+    results_queue_id = DEFAULT_CF_RESULTS_QUEUE_ID
 
     total = 0
     if target in {"jobs", "all"}:
@@ -673,7 +672,7 @@ def cmd_status(output_json: bool = False) -> None:
                     0.0,
                     (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds(),
                 )
-                max_age = float(os.getenv("HPC_HEARTBEAT_MAX_AGE_SECONDS", "90"))
+                max_age = DEFAULT_HPC_HEARTBEAT_MAX_AGE_SECONDS
                 hpc_running_remote = heartbeat_age_seconds <= max_age
         except Exception:
             heartbeat = None

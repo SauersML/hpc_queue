@@ -31,9 +31,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
 
-    restart_delay = float(os.getenv("SUPERVISOR_RESTART_DELAY_SECONDS", "2"))
-    restart_delay = max(0.5, restart_delay)
-    python_bin = os.getenv("PYTHON_BIN", sys.executable or "python3")
+    restart_delay = 2.0
+    python_bin = sys.executable or "python3"
 
     SUPERVISOR_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     SUPERVISOR_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")

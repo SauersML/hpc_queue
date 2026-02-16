@@ -26,8 +26,16 @@ DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_PULL_BATCH_SIZE = 100
+DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
+DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_RETRY_DELAY_SECONDS = 30
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 ROOT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_RESULTS_DIR = "results"
 DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
+DEFAULT_APPTAINER_BIN = "apptainer"
+DEFAULT_APPTAINER_BIND = ""
+DEFAULT_CONTAINER_CMD = "python /app/run.py"
 DEFAULT_EXTERNAL_REPOS_ROOT = str(ROOT_DIR / "runtime" / "external-src")
 DEFAULT_GNOMON_REPO_URL = "https://github.com/SauersML/gnomon.git"
 DEFAULT_REAGLE_REPO_URL = "https://github.com/SauersML/reagle.git"
@@ -78,22 +86,19 @@ def load_config() -> Config:
         return val
 
     return Config(
-        account_id=os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID),
-        jobs_queue_id=os.getenv("CF_JOBS_QUEUE_ID", DEFAULT_CF_JOBS_QUEUE_ID),
-        results_queue_id=os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID),
+        account_id=DEFAULT_CF_ACCOUNT_ID,
+        jobs_queue_id=DEFAULT_CF_JOBS_QUEUE_ID,
+        results_queue_id=DEFAULT_CF_RESULTS_QUEUE_ID,
         api_token=req("CF_QUEUES_API_TOKEN"),
-        visibility_timeout_ms=int(os.getenv("VISIBILITY_TIMEOUT_MS", "120000")),
-        poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
-        retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
-        heartbeat_interval_seconds=float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30")),
-        results_dir=os.getenv("RESULTS_DIR", "results"),
-        apptainer_image=os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE),
-        apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
-        apptainer_bind=os.getenv("APPTAINER_BIND", ""),
-        container_cmd=os.getenv(
-            "CONTAINER_CMD",
-            "python /app/run.py",
-        ),
+        visibility_timeout_ms=DEFAULT_VISIBILITY_TIMEOUT_MS,
+        poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
+        retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
+        heartbeat_interval_seconds=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        results_dir=DEFAULT_RESULTS_DIR,
+        apptainer_image=DEFAULT_APPTAINER_IMAGE,
+        apptainer_bin=DEFAULT_APPTAINER_BIN,
+        apptainer_bind=DEFAULT_APPTAINER_BIND,
+        container_cmd=DEFAULT_CONTAINER_CMD,
         external_repos_root=DEFAULT_EXTERNAL_REPOS_ROOT,
         gnomon_repo_url=DEFAULT_GNOMON_REPO_URL,
         gnomon_repo_ref=DEFAULT_REPO_REF,
