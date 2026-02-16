@@ -80,6 +80,24 @@ jobs:
           apptainer pull --force dist/hpc-queue-runtime.sif docker://ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:latest
           sha256sum dist/hpc-queue-runtime.sif > dist/hpc-queue-runtime.sif.sha256
 
+      - name: Validate runtime tools in SIF
+        run: |
+          set -euo pipefail
+          apptainer exec dist/hpc-queue-runtime.sif bash -lc '
+            set -euo pipefail
+            bcftools --version | head -n 1
+            /usr/bin/time --version | head -n 1
+            plink2 --help >/dev/null
+            if command -v gctb >/dev/null 2>&1; then
+              gctb --help >/dev/null
+            elif command -v gctb64 >/dev/null 2>&1; then
+              gctb64 --help >/dev/null
+            else
+              echo "gctb binary missing" >&2
+              exit 1
+            fi
+          '
+
       - name: Publish SIF release assets
         uses: softprops/action-gh-release@v2
         with:

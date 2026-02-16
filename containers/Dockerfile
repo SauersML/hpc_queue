@@ -9,7 +9,7 @@ ENV PIP_NO_CACHE_DIR=1
 ENV MAMBA_ROOT_PREFIX=/opt/conda
 ENV RUSTUP_HOME=/opt/rust/rustup
 ENV CARGO_HOME=/opt/rust/cargo
-ENV PATH=/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PATH=/opt/conda/envs/base/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -39,9 +39,7 @@ RUN apt-get update \
 
 RUN curl -sSfL https://micro.mamba.pm/api/micromamba/linux-64/latest \
       | tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba \
-    && micromamba create -y -n base -c conda-forge -c bioconda plink2 gctb \
-    && ln -sf /opt/conda/envs/base/bin/plink2 /usr/local/bin/plink2 \
-    && ln -sf /opt/conda/envs/base/bin/gctb /usr/local/bin/gctb
+    && micromamba create -y -n base -c conda-forge -c bioconda plink2 gctb
 
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
     && rustup update stable \
@@ -55,6 +53,20 @@ RUN pip install -r /tmp/requirements.txt
 RUN mkdir -p /opt/src \
     && git clone --depth 1 --branch "${GNOMON_REF}" https://github.com/SauersML/gnomon.git /opt/src/gnomon \
     && git clone --depth 1 --branch "${REAGLE_REF}" https://github.com/SauersML/reagle.git /opt/src/reagle
+
+RUN set -eux; \
+    command -v bcftools; \
+    test -x /usr/bin/time; \
+    command -v plink2; \
+    if command -v gctb >/dev/null 2>&1; then \
+      true; \
+    elif command -v gctb64 >/dev/null 2>&1; then \
+      ln -sf "$(command -v gctb64)" /usr/local/bin/gctb; \
+    else \
+      echo "gctb binary not found after install" >&2; \
+      exit 1; \
+    fi; \
+    command -v gctb
 
 WORKDIR /app
 COPY app/run.py /app/run.py

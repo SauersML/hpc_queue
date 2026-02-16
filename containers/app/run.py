@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,6 +46,7 @@ def main() -> None:
     }
 
     OUTPUT_PATH.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    raise SystemExit(proc.returncode)
 
 
 if __name__ == "__main__":
