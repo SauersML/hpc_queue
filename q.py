@@ -168,9 +168,17 @@ def cmd_worker() -> None:
     maybe_refresh_image()
 
     run([str(ROOT / "hpc-consumer" / "start_consumer.sh")], cwd=ROOT)
-    run([str(ROOT / "hpc-consumer" / "install_cron_watchdog.sh")], cwd=ROOT)
+    cron_installed = True
+    try:
+        run([str(ROOT / "hpc-consumer" / "install_cron_watchdog.sh")], cwd=ROOT)
+    except subprocess.CalledProcessError:
+        cron_installed = False
+        print("warning: failed to install cron watchdog; worker is still running")
 
-    print("worker started and cron watchdog installed")
+    if cron_installed:
+        print("worker started and cron watchdog installed")
+    else:
+        print("worker started (without cron watchdog)")
     print(f"log file: {ROOT / 'hpc-consumer' / 'hpc_pull_consumer.log'}")
 
 
