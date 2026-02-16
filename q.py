@@ -256,7 +256,7 @@ def ensure_local_watcher_running() -> None:
         )
 
 
-def submit_payload(payload: dict[str, Any], wait: bool) -> None:
+def submit_payload(payload: dict[str, Any], wait: bool) -> str:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
     ensure_local_watcher_running()
@@ -297,8 +297,9 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> None:
             print(f"result_json: {json_path}")
             print(f"result_stdout: {stdout_path}")
             print(f"result_stderr: {stderr_path}")
-            return
+            return job_id
         wait_for_local_result_file(job_id=job_id)
+        return job_id
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
@@ -306,7 +307,9 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> None:
 
 def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
     payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
-    submit_payload(payload=payload, wait=wait)
+    job_id = submit_payload(payload=payload, wait=wait)
+    if wait and job_id:
+        cmd_logs(job_id)
 
 
 def cmd_run_file(file_path: str, file_args: list[str], wait: bool, runner: str) -> None:
@@ -318,7 +321,9 @@ def cmd_run_file(file_path: str, file_args: list[str], wait: bool, runner: str) 
             runner=runner,
         )
     }
-    submit_payload(payload=payload, wait=wait)
+    job_id = submit_payload(payload=payload, wait=wait)
+    if wait and job_id:
+        cmd_logs(job_id)
 
 
 def maybe_refresh_image() -> None:
@@ -548,6 +553,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def normalize_wait_flag(argv: list[str]) -> list[str]:
+    if not argv:
+        return argv
+
+    cmd = argv[0]
+    if cmd not in {"submit", "host", "run-file"}:
+        return argv
+    if "--wait" not in argv[1:]:
+        return argv
+
+    rest = [part for part in argv[1:] if part != "--wait"]
+    return [cmd, "--wait", *rest]
+
+
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
@@ -556,6 +575,7 @@ def main() -> None:
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
         argv = ["submit", *argv]
+    argv = normalize_wait_flag(argv)
     args = parser.parse_args(argv)
 
     if args.command == "submit":
