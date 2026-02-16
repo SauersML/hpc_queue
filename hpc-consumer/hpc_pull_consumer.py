@@ -330,6 +330,7 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
     ) as stderr_fp:
         proc = subprocess.run(
             ["/bin/bash", "-lc", command],
+            cwd=str(results_dir.resolve()),
             stdout=stdout_fp,
             stderr=stderr_fp,
             text=True,
