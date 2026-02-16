@@ -12,7 +12,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import queue as queue_mod
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,6 +44,8 @@ class Config:
     apptainer_bin: str = "apptainer"
     apptainer_bind: str = ""
     container_cmd: str = "python /app/run.py"
+    stream_logs: bool = True
+    max_log_lines: int = 1000
 
     @property
     def jobs_api_base(self) -> str:
@@ -82,6 +86,8 @@ def load_config() -> Config:
             "CONTAINER_CMD",
             "python /app/run.py",
         ),
+        stream_logs=os.getenv("STREAM_LOG_EVENTS", "1").lower() not in {"0", "false", "no"},
+        max_log_lines=int(os.getenv("MAX_LOG_LINES", "1000")),
     )
 
 
@@ -119,7 +125,7 @@ def decode_message_body(body: Any) -> dict[str, Any]:
     raise ValueError(f"Unsupported body type: {type(body)}")
 
 
-def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
+def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple[str, int]:
     """Run compute directly on node using Apptainer."""
     job_id = str(job.get("job_id", "unknown"))
     job_dir = results_dir / job_id
@@ -145,7 +151,60 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
     cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])
 
     started = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    line_events = 0
+
+    q: queue_mod.Queue[tuple[str, str]] = queue_mod.Queue()
+
+    def pump(stream: Any, name: str) -> None:
+        try:
+            for line in iter(stream.readline, ""):
+                q.put((name, line.rstrip("\n")))
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    t_out = threading.Thread(target=pump, args=(proc.stdout, "stdout"), daemon=True)
+    t_err = threading.Thread(target=pump, args=(proc.stderr, "stderr"), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    while t_out.is_alive() or t_err.is_alive() or not q.empty():
+        try:
+            stream_name, line = q.get(timeout=0.2)
+        except queue_mod.Empty:
+            continue
+        if stream_name == "stdout":
+            stdout_lines.append(line)
+        else:
+            stderr_lines.append(line)
+
+        if config.stream_logs and line_events < config.max_log_lines:
+            enqueue_result(
+                config=config,
+                job_id=job_id,
+                status="running",
+                result_pointer="",
+                extra={
+                    "event_type": "log",
+                    "stream": stream_name,
+                    "line": line,
+                },
+            )
+            line_events += 1
+
+    proc.wait()
     finished = datetime.now(timezone.utc).isoformat()
 
     meta = {
@@ -154,8 +213,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
         "started_at": started,
         "finished_at": finished,
         "returncode": proc.returncode,
-        "stdout": proc.stdout[-8000:],
-        "stderr": proc.stderr[-8000:],
+        "stdout": "\n".join(stdout_lines)[-8000:],
+        "stderr": "\n".join(stderr_lines)[-8000:],
         "input_path": str(input_path.resolve()),
         "output_path": str(output_path.resolve()),
     }
@@ -180,7 +239,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
             encoding="utf-8",
         )
 
-    return str(output_path.resolve())
+    return str(output_path.resolve()), proc.returncode
 
 
 def ensure_image_fresh() -> None:
@@ -189,12 +248,20 @@ def ensure_image_fresh() -> None:
     subprocess.run([str(updater)], cwd=str(ROOT_DIR), check=True)
 
 
-def enqueue_result(config: Config, job_id: str, status: str, result_pointer: str) -> None:
+def enqueue_result(
+    config: Config,
+    job_id: str,
+    status: str,
+    result_pointer: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
     payload = {
         "job_id": job_id,
         "status": status,
         "result_pointer": result_pointer,
     }
+    if extra:
+        payload.update(extra)
     cf_post(
         url=config.results_api_base,
         token=config.api_token,
@@ -235,12 +302,13 @@ def process_once(config: Config) -> None:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
             ensure_image_fresh()
-            result_pointer = run_compute(job, results_dir, config)
+            result_pointer, exit_code = run_compute(job, results_dir, config)
             enqueue_result(
                 config=config,
                 job_id=job_id,
-                status="completed",
+                status="completed" if exit_code == 0 else "failed",
                 result_pointer=result_pointer,
+                extra={"event_type": "completed", "exit_code": exit_code},
             )
             acks.append({"lease_id": lease_id})
             print(f"completed job {job_id} -> {result_pointer}")

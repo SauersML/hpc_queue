@@ -111,10 +111,21 @@ def parse_input(raw: str) -> dict[str, Any]:
     return payload
 
 
-def cmd_submit(raw_input: str) -> None:
+def build_submit_input(raw_parts: list[str], json_mode: bool) -> dict[str, Any]:
+    if not raw_parts:
+        raise RuntimeError("submit requires a command or --json payload")
+    raw = " ".join(raw_parts).strip()
+    if json_mode:
+        return parse_input(raw)
+    if raw.startswith("{") or raw.startswith("@"):
+        return parse_input(raw)
+    return {"command": raw}
+
+
+def cmd_submit(raw_parts: list[str], json_mode: bool) -> None:
     api_key = require_env("API_KEY")
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
-    payload = {"input": parse_input(raw_input)}
+    payload = {"input": build_submit_input(raw_parts, json_mode)}
 
     req = request.Request(
         url=f"{worker_url}/jobs",
@@ -184,7 +195,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     submit = sub.add_parser("submit", help="submit a job input JSON")
-    submit.add_argument("input", help="JSON object or @/path/to/input.json")
+    submit.add_argument(
+        "--json",
+        action="store_true",
+        help="treat payload as JSON (otherwise payload is treated as shell command)",
+    )
+    submit.add_argument(
+        "payload",
+        nargs=argparse.REMAINDER,
+        help="shell command (default) or JSON object/@file when --json is used",
+    )
 
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="Cloudflare queue API token (HPC_QUEUE_KEY)")
@@ -205,7 +225,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "submit":
-        cmd_submit(args.input)
+        cmd_submit(args.payload, args.json)
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,

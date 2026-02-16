@@ -21,17 +21,26 @@ python3 /Users/user/hpc_queue/q.py login
 
 ## Local machine
 
-Submit a job (JSON object or `@file.json`):
+Submit a command job:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py submit '{"iterations":100}'
+python3 /Users/user/hpc_queue/q.py submit ls
+python3 /Users/user/hpc_queue/q.py submit "python /work/script.py --iters 100"
 ```
 
-Pull results:
+Submit raw JSON input instead:
+
+```bash
+python3 /Users/user/hpc_queue/q.py submit --json '{"command":"ls -la"}'
+```
+
+Pull results and live logs:
 
 ```bash
 python3 /Users/user/hpc_queue/q.py results
 ```
+
+`q.py results` prints streaming log events (`status=running`) and final completion message with `result_pointer`.
 
 ## HPC node
 
