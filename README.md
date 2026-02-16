@@ -84,6 +84,48 @@ q logs <job_id>
 
 `q logs` reads local files when available, and otherwise falls back to cached queue result tails.
 
+## CLI Reference
+
+`q login`
+- `--queue-token <token>`: set Cloudflare queue API token.
+- `--api-key <key>`: set `/jobs` API key (auto-generated if omitted).
+
+`q submit <command...>`
+- Runs command inside Apptainer runtime on HPC.
+- `--wait`: block until local result file exists, then print logs.
+
+`q host <command...>`
+- Runs command directly on HPC host (outside container).
+- `--wait`: block until local result file exists, then print logs.
+
+`q run-file [--runner <bin>] <local_file> [-- <args...>]`
+- Uploads local file into job payload and executes it on HPC in container.
+- Default runner is `python`.
+- `--runner bash` for shell scripts, or `--runner ""` to execute directly.
+- `--wait`: block until local result file exists, then print logs.
+
+`q logs <job_id>`
+- Prints job summary plus stdout/stderr from local artifacts or cache.
+
+`q results`
+- Pull one batch from results queue and write local artifacts.
+
+`q status`
+- Shows local process status.
+- On local, also includes remote heartbeat fields:
+  - `hpc_running_remote`
+  - `hpc_last_heartbeat`
+  - `hpc_heartbeat_age_seconds`
+
+`q clear jobs|results|all`
+- Purges messages from selected queue(s) using pull+ack loops.
+- `--batch-size <n>`: pull size per cycle (default `100`).
+- `--max-batches <n>`: max cycles (default `200`).
+
+`q stop`
+- Stops local worker/watcher processes.
+- `--all`: also clears jobs + results queues.
+
 ## HPC node
 
 Start worker + auto image refresh in one command:
