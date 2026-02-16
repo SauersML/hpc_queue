@@ -306,6 +306,9 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
 
 
 def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
+    if not wait and "--wait" in raw_parts:
+        wait = True
+        raw_parts = [part for part in raw_parts if part != "--wait"]
     payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
     job_id = submit_payload(payload=payload, wait=wait)
     if wait and job_id:
@@ -313,6 +316,9 @@ def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -
 
 
 def cmd_run_file(file_path: str, file_args: list[str], wait: bool, runner: str) -> None:
+    if not wait and "--wait" in file_args:
+        wait = True
+        file_args = [part for part in file_args if part != "--wait"]
     payload = {
         "input": build_run_file_input(
             file_path=file_path,
