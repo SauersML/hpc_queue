@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import getpass
 import json
 import os
@@ -23,6 +24,7 @@ RESULTS_CACHE_PATH = ROOT / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = ROOT / "local-results"
 LOCAL_WATCHER_PID_FILE = ROOT / "local-consumer" / "local_results_watcher.pid"
 LOCAL_WATCHER_LOG_FILE = ROOT / "local-consumer" / "local_results_watcher.log"
+HPC_STATUS_PATH = ROOT / "local-consumer" / "hpc_status.json"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
 DEFAULT_INLINE_FILE_MAX_BYTES = 64 * 1024
@@ -477,6 +479,24 @@ def cmd_status() -> None:
         local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
         local_running = process_matches(local_pid, "local_pull_results.py --loop")
 
+    heartbeat = None
+    heartbeat_age_seconds = None
+    hpc_running_remote = None
+    if HPC_STATUS_PATH.exists():
+        try:
+            heartbeat = json.loads(HPC_STATUS_PATH.read_text(encoding="utf-8"))
+            ts_raw = str(heartbeat.get("timestamp", "")).strip()
+            if ts_raw:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                heartbeat_age_seconds = max(
+                    0.0,
+                    (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds(),
+                )
+                max_age = float(os.getenv("HPC_HEARTBEAT_MAX_AGE_SECONDS", "90"))
+                hpc_running_remote = heartbeat_age_seconds <= max_age
+        except Exception:
+            heartbeat = None
+
     print(
         json.dumps(
             {
@@ -484,6 +504,9 @@ def cmd_status() -> None:
                 "pid": pid or None,
                 "local_results_watcher_running": local_running,
                 "local_results_watcher_pid": local_pid or None,
+                "hpc_running_remote": hpc_running_remote,
+                "hpc_last_heartbeat": heartbeat,
+                "hpc_heartbeat_age_seconds": heartbeat_age_seconds,
             }
         )
     )

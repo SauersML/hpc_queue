@@ -37,6 +37,7 @@ class Config:
     visibility_timeout_ms: int = 120000
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
+    heartbeat_interval_seconds: float = 30.0
     results_dir: str = "results"
     apptainer_image: str = ""
     apptainer_bin: str = "apptainer"
@@ -74,6 +75,7 @@ def load_config() -> Config:
         visibility_timeout_ms=int(os.getenv("VISIBILITY_TIMEOUT_MS", "120000")),
         poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
+        heartbeat_interval_seconds=float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30")),
         results_dir=os.getenv("RESULTS_DIR", "results"),
         apptainer_image=os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE),
         apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
@@ -341,6 +343,23 @@ def enqueue_result(
     )
 
 
+def enqueue_heartbeat(config: Config) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "event_type": "heartbeat",
+        "status": "alive",
+        "source": "hpc-consumer",
+        "hostname": os.uname().nodename,
+        "pid": os.getpid(),
+        "timestamp": now,
+    }
+    cf_post(
+        url=config.results_api_base,
+        token=config.api_token,
+        payload={"body": payload},
+    )
+
+
 def process_once(config: Config) -> None:
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
@@ -429,8 +448,13 @@ def main() -> None:
         )
     )
 
+    last_heartbeat = 0.0
     while True:
         try:
+            now = time.monotonic()
+            if now - last_heartbeat >= max(1.0, config.heartbeat_interval_seconds):
+                enqueue_heartbeat(config)
+                last_heartbeat = now
             process_once(config)
         except Exception as exc:
             print(f"poll loop error: {exc}")

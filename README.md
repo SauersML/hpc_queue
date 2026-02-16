@@ -100,6 +100,8 @@ Check status:
 q status
 ```
 
+`q status` on local also reports `hpc_running_remote` using heartbeat events from the HPC consumer.
+
 Stop worker:
 
 ```bash

@@ -19,6 +19,7 @@ DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "results_cache.jsonl"
+HPC_STATUS_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "hpc_status.json"
 LOCAL_RESULTS_DIR = Path(__file__).resolve().parent.parent / "local-results"
 
 
@@ -125,6 +126,10 @@ def process_once(config: Config) -> None:
         with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
             cache_fp.write(body_json + "\n")
         if isinstance(body, dict):
+            event_type = str(body.get("event_type", "")).strip()
+            if event_type == "heartbeat":
+                HPC_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                HPC_STATUS_PATH.write_text(json.dumps(body, indent=2), encoding="utf-8")
             job_id = str(body.get("job_id", "")).strip()
             status = str(body.get("status", "")).strip()
             if job_id and status in {"completed", "failed"}:
