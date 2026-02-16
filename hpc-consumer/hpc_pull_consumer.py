@@ -228,10 +228,13 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         job_input = {}
     input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
     staged_files = stage_local_files(job_input, job_dir)
+    sync_warning = ""
     try:
         synced_repos = sync_external_repos(config)
     except Exception as exc:
-        raise RuntimeError(f"external repo sync failed: {exc}") from exc
+        sync_warning = f"external repo sync failed, using baked repos: {exc}"
+        print(f"warning: {sync_warning}")
+        synced_repos = []
 
     cmd = [
         config.apptainer_bin,
@@ -267,6 +270,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "returncode": proc.returncode,
         "staged_files": staged_files,
         "synced_repos": synced_repos,
+        "sync_warning": sync_warning,
         "stdout_tail": tail_text(stdout_path),
         "stderr_tail": tail_text(stderr_path),
         "stdout_path": str(stdout_path.resolve()),

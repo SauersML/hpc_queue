@@ -26,7 +26,7 @@ def main() -> None:
     command = str(data.get("command", "echo no command provided"))
 
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.run(command, shell=True, capture_output=True, text=True)
+    proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd="/")
     finished_at = datetime.now(timezone.utc).isoformat()
 
     STDOUT_PATH.write_text(proc.stdout, encoding="utf-8")
