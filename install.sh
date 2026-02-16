@@ -9,7 +9,7 @@ Q_LINK="$BIN_DIR/q"
 PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
 
 is_sourced=0
-if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+if (return 0 2>/dev/null); then
   is_sourced=1
 fi
 
