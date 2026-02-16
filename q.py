@@ -16,8 +16,6 @@ ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 DEFAULT_APPTAINER_IMAGE = str(ROOT / "runtime" / "hpc-queue-runtime.sif")
-OLD_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime:latest"
-DEFAULT_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime-open:latest"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
 
@@ -136,30 +134,14 @@ def cmd_submit(raw_parts: list[str]) -> None:
         raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
 
 
-def get_apptainer_image_path() -> Path:
-    return Path(os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE)).expanduser()
-
-
 def maybe_refresh_image() -> None:
     print("refreshing Apptainer image...")
     try:
         run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            "image refresh failed. verify APPTAINER_BIN is installed and APPTAINER_OCI_REF is reachable."
+            "image refresh failed. verify APPTAINER_SIF_URL/APPTAINER_SIF_SHA256_URL are reachable."
         ) from exc
-
-
-def migrate_legacy_image_ref() -> None:
-    current_ref = os.getenv("APPTAINER_OCI_REF", "").strip()
-    if current_ref != OLD_APPTAINER_OCI_REF:
-        return
-    upsert_env(ENV_PATH, {"APPTAINER_OCI_REF": DEFAULT_APPTAINER_OCI_REF})
-    os.environ["APPTAINER_OCI_REF"] = DEFAULT_APPTAINER_OCI_REF
-    print(
-        "updated APPTAINER_OCI_REF to public image "
-        f"{DEFAULT_APPTAINER_OCI_REF}"
-    )
 
 
 def cmd_worker() -> None:
@@ -262,7 +244,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     load_dotenv(ENV_PATH)
-    migrate_legacy_image_ref()
     parser = build_parser()
     known_commands = {"submit", "login", "start", "worker", "results", "logs", "status", "stop"}
     argv = sys.argv[1:]

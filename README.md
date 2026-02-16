@@ -57,7 +57,7 @@ Start worker + auto image refresh in one command:
 q start
 ```
 
-If `q start` fails, verify `apptainer` is installed and your `APPTAINER_OCI_REF` is valid.
+If `q start` fails, verify `apptainer` is installed and `APPTAINER_SIF_URL` is reachable.
 
 Check status:
 
@@ -74,8 +74,8 @@ q stop
 ## How worker image updates happen
 
 `q start` resolves the remote image digest first.
-- If digest is unchanged, it skips pull.
-- If digest changed, it pulls and updates the local `.sif`.
+- If digest is unchanged, it skips download.
+- If digest changed, it downloads the new `.sif` built by GitHub Actions and updates local image.
 
 This gives both properties:
 - never stale (digest checked every startup)

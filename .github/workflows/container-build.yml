@@ -16,7 +16,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
@@ -63,3 +63,26 @@ jobs:
           cache-to: |
             type=gha,mode=max,scope=hpc-queue-runtime-open
             type=registry,ref=ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:buildcache,mode=max
+
+      - name: Install Apptainer
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apptainer
+
+      - name: Build SIF from pushed image
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apptainer pull --force dist/hpc-queue-runtime.sif docker://ghcr.io/${{ steps.owner.outputs.owner_lc }}/hpc-queue-runtime-open:latest
+          sha256sum dist/hpc-queue-runtime.sif > dist/hpc-queue-runtime.sif.sha256
+
+      - name: Publish SIF release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: sif-latest
+          name: sif-latest
+          files: |
+            dist/hpc-queue-runtime.sif
+            dist/hpc-queue-runtime.sif.sha256
+          overwrite_files: true

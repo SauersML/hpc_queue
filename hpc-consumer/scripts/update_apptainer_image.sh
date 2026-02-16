@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keep local SIF fresh without unnecessary pulls:
-# - Resolve remote digest for APPTAINER_OCI_REF
-# - Skip pull when local digest matches
-# - Pull only when digest changed or image missing
+# Keep local SIF fresh without unnecessary downloads:
+# - Fetch remote sha256 for release-published SIF
+# - Skip download when local digest matches
+# - Download + verify only when digest changed or image missing
 
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_DIR"
@@ -13,114 +13,34 @@ set -a
 source .env
 set +a
 
-: "${APPTAINER_BIN:=apptainer}"
 : "${APPTAINER_IMAGE:=$REPO_DIR/runtime/hpc-queue-runtime.sif}"
-: "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime-open:latest}"
-: "${PYTHON_BIN:=python3}"
-
-if ! command -v "$APPTAINER_BIN" >/dev/null 2>&1; then
-  echo "error: APPTAINER_BIN not found: $APPTAINER_BIN" >&2
-  echo "install Apptainer or set APPTAINER_BIN in .env" >&2
-  exit 1
-fi
+: "${APPTAINER_SIF_URL:=https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif}"
+: "${APPTAINER_SIF_SHA256_URL:=https://github.com/SauersML/hpc_queue/releases/download/sif-latest/hpc-queue-runtime.sif.sha256}"
 
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
 
 TMP_IMAGE="${APPTAINER_IMAGE}.tmp"
 DIGEST_FILE="${APPTAINER_IMAGE}.digest"
 
-resolve_remote_digest() {
-  "$PYTHON_BIN" - "$APPTAINER_OCI_REF" <<'PY'
-import base64
-import json
-import os
-import sys
-import urllib.parse
-import urllib.request
-import urllib.error
-
-ref = sys.argv[1]
-if ref.startswith("docker://"):
-    ref = ref[len("docker://"):]
-if "/" not in ref:
-    raise SystemExit(f"invalid OCI ref: {ref}")
-
-registry, remainder = ref.split("/", 1)
-if "@" in remainder:
-    _repo, digest = remainder.split("@", 1)
-    print(digest)
-    raise SystemExit(0)
-
-if ":" in remainder.rsplit("/", 1)[-1]:
-    repo, tag = remainder.rsplit(":", 1)
-else:
-    repo, tag = remainder, "latest"
-
-scope = urllib.parse.quote(f"repository:{repo}:pull", safe="")
-token_url = f"https://{registry}/token?service={registry}&scope={scope}"
-token_req = urllib.request.Request(token_url, method="GET")
-
-ghcr_token = os.getenv("GHCR_TOKEN", "")
-ghcr_user = os.getenv("GHCR_USERNAME", "") or "oauth2"
-if ghcr_token:
-    basic = base64.b64encode(f"{ghcr_user}:{ghcr_token}".encode()).decode()
-    token_req.add_header("Authorization", f"Basic {basic}")
-
-try:
-    with urllib.request.urlopen(token_req, timeout=30) as resp:
-        token_data = json.loads(resp.read().decode("utf-8"))
-except urllib.error.HTTPError as exc:
-    if exc.code in (401, 403):
-        raise SystemExit("registry token unauthorized (401/403)")
-    raise
-token = token_data.get("token") or token_data.get("access_token")
-if not token:
-    raise SystemExit("failed to obtain registry token")
-
-manifest_url = f"https://{registry}/v2/{repo}/manifests/{tag}"
-manifest_req = urllib.request.Request(manifest_url, method="GET")
-manifest_req.add_header("Authorization", f"Bearer {token}")
-manifest_req.add_header(
-    "Accept",
-    ",".join(
-        [
-            "application/vnd.oci.image.index.v1+json",
-            "application/vnd.oci.image.manifest.v1+json",
-            "application/vnd.docker.distribution.manifest.list.v2+json",
-            "application/vnd.docker.distribution.manifest.v2+json",
-        ]
-    ),
-)
-
-try:
-    with urllib.request.urlopen(manifest_req, timeout=30) as resp:
-        digest = resp.headers.get("Docker-Content-Digest", "").strip()
-except urllib.error.HTTPError as exc:
-    if exc.code in (401, 403):
-        raise SystemExit("manifest unauthorized (401/403)")
-    raise
-if not digest:
-    raise SystemExit("failed to resolve remote digest")
-print(digest)
-PY
+fetch_remote_digest() {
+  local sha_line
+  sha_line="$(curl -fsSL "$APPTAINER_SIF_SHA256_URL")"
+  echo "$sha_line" | awk '{print $1}'
 }
 
 REMOTE_DIGEST=""
-if ! REMOTE_DIGEST="$(resolve_remote_digest)"; then
-  echo "warning: could not resolve remote digest for $APPTAINER_OCI_REF" >&2
+if ! REMOTE_DIGEST="$(fetch_remote_digest)"; then
+  echo "warning: could not read remote SIF digest from $APPTAINER_SIF_SHA256_URL" >&2
   if [[ -f "$APPTAINER_IMAGE" ]]; then
     echo "warning: using existing local image at $APPTAINER_IMAGE" >&2
     exit 0
   fi
+  echo "error: no local image found and remote SIF digest unavailable" >&2
+  exit 1
+fi
 
-  echo "no local image found; attempting direct pull without digest precheck" >&2
-  if "$APPTAINER_BIN" pull --force "$TMP_IMAGE" "docker://$APPTAINER_OCI_REF"; then
-    mv "$TMP_IMAGE" "$APPTAINER_IMAGE"
-    echo "pulled image without digest precheck: $APPTAINER_IMAGE"
-    exit 0
-  fi
-
-  echo "error: failed to refresh image." >&2
+if [[ -z "$REMOTE_DIGEST" ]]; then
+  echo "error: empty remote digest from $APPTAINER_SIF_SHA256_URL" >&2
   exit 1
 fi
 
@@ -130,12 +50,20 @@ if [[ -f "$DIGEST_FILE" ]]; then
 fi
 
 if [[ -f "$APPTAINER_IMAGE" && "$LOCAL_DIGEST" == "$REMOTE_DIGEST" ]]; then
-  echo "image up-to-date ($REMOTE_DIGEST), skipping pull"
+  echo "image up-to-date ($REMOTE_DIGEST), skipping download"
   exit 0
 fi
 
-echo "digest changed ($LOCAL_DIGEST -> $REMOTE_DIGEST), pulling $APPTAINER_OCI_REF"
-"$APPTAINER_BIN" pull --force "$TMP_IMAGE" "docker://$APPTAINER_OCI_REF"
+echo "digest changed ($LOCAL_DIGEST -> $REMOTE_DIGEST), downloading SIF"
+curl -fsSL "$APPTAINER_SIF_URL" -o "$TMP_IMAGE"
+
+DOWNLOADED_DIGEST="$(sha256sum "$TMP_IMAGE" | awk '{print $1}')"
+if [[ "$DOWNLOADED_DIGEST" != "$REMOTE_DIGEST" ]]; then
+  echo "error: SIF digest mismatch ($DOWNLOADED_DIGEST != $REMOTE_DIGEST)" >&2
+  rm -f "$TMP_IMAGE"
+  exit 1
+fi
+
 mv "$TMP_IMAGE" "$APPTAINER_IMAGE"
 printf "%s\n" "$REMOTE_DIGEST" > "$DIGEST_FILE"
 echo "updated $APPTAINER_IMAGE ($REMOTE_DIGEST)"
