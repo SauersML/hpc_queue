@@ -37,19 +37,25 @@ cd /Users/user/hpc_queue
 ./hpc-consumer/scripts/update_apptainer_image.sh
 ```
 
-## Run compute-node worker (auto-restart)
+## Run compute-node worker (auto-restart with cron)
 
 ```bash
 cd /Users/user/hpc_queue
-./hpc-consumer/install_user_service.sh
-./hpc-consumer/service_control.sh status
-./hpc-consumer/service_control.sh logs
+./hpc-consumer/start_consumer.sh
+./hpc-consumer/install_cron_watchdog.sh
 ```
 
-Optional persistence across logout/reboot:
+Watch logs:
 
 ```bash
-sudo loginctl enable-linger "$USER"
+tail -f /Users/user/hpc_queue/hpc-consumer/hpc_pull_consumer.log
+```
+
+Remove watchdog:
+
+```bash
+cd /Users/user/hpc_queue
+./hpc-consumer/remove_cron_watchdog.sh
 ```
 
 ## Run laptop results puller
