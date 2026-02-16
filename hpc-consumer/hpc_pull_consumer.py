@@ -196,6 +196,83 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     return str(output_path.resolve()), proc.returncode, meta
 
 
+def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, dict[str, Any]]:
+    """Run compute directly on host node (outside Apptainer)."""
+    job_id = str(job.get("job_id", "unknown"))
+    job_dir = results_dir / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = job_dir / "input.json"
+    output_path = job_dir / "output.json"
+    meta_path = job_dir / "meta.json"
+    stdout_path = job_dir / "stdout.log"
+    stderr_path = job_dir / "stderr.log"
+
+    job_input = job.get("input", {})
+    input_path.write_text(
+        json.dumps({"job_id": job_id, "input": job_input}),
+        encoding="utf-8",
+    )
+    command = str(job_input.get("command", "echo no command provided"))
+
+    started = datetime.now(timezone.utc).isoformat()
+    with stdout_path.open("w", encoding="utf-8") as stdout_fp, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr_fp:
+        proc = subprocess.run(
+            ["/bin/bash", "-lc", command],
+            stdout=stdout_fp,
+            stderr=stderr_fp,
+            text=True,
+        )
+    finished = datetime.now(timezone.utc).isoformat()
+
+    def tail_text(path: Path, chars: int = 8000) -> str:
+        try:
+            return path.read_text(encoding="utf-8")[-chars:]
+        except Exception:
+            return ""
+
+    meta = {
+        "job_id": job_id,
+        "exec_mode": "host",
+        "command": command,
+        "status": "completed" if proc.returncode == 0 else "failed",
+        "started_at": started,
+        "finished_at": finished,
+        "returncode": proc.returncode,
+        "stdout_tail": tail_text(stdout_path),
+        "stderr_tail": tail_text(stderr_path),
+        "stdout_path": str(stdout_path.resolve()),
+        "stderr_path": str(stderr_path.resolve()),
+        "input_path": str(input_path.resolve()),
+        "output_path": str(output_path.resolve()),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    output_path.write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "exec_mode": "host",
+                "command": command,
+                "status": "completed" if proc.returncode == 0 else "failed",
+                "started_at": started,
+                "finished_at": finished,
+                "exit_code": proc.returncode,
+                "result": {
+                    "stdout_path": str(stdout_path.resolve()),
+                    "stderr_path": str(stderr_path.resolve()),
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return str(output_path.resolve()), proc.returncode, meta
+
+
 def ensure_image_fresh() -> None:
     """Ensure local SIF matches current remote digest before running a job."""
     updater = ROOT_DIR / "hpc-consumer" / "scripts" / "update_apptainer_image.sh"
@@ -255,8 +332,13 @@ def process_once(config: Config) -> None:
         try:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
-            ensure_image_fresh()
-            result_pointer, exit_code, meta = run_compute(job, results_dir, config)
+            job_input = job.get("input", {})
+            exec_mode = str(job_input.get("exec_mode", "container")).lower() if isinstance(job_input, dict) else "container"
+            if exec_mode == "host":
+                result_pointer, exit_code, meta = run_host_compute(job, results_dir)
+            else:
+                ensure_image_fresh()
+                result_pointer, exit_code, meta = run_compute(job, results_dir, config)
             enqueue_result(
                 config=config,
                 job_id=job_id,
@@ -264,6 +346,7 @@ def process_once(config: Config) -> None:
                 result_pointer=result_pointer,
                 extra={
                     "event_type": "completed",
+                    "exec_mode": exec_mode,
                     "exit_code": exit_code,
                     "stdout_tail": meta.get("stdout_tail", ""),
                     "stderr_tail": meta.get("stderr_tail", ""),

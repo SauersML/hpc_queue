@@ -119,11 +119,11 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
         print("api-key: kept existing/provided value")
 
 
-def build_submit_input(raw_parts: list[str]) -> dict[str, Any]:
+def build_submit_input(raw_parts: list[str], exec_mode: str) -> dict[str, Any]:
     if not raw_parts:
         raise RuntimeError("submit requires a command")
     raw = " ".join(raw_parts).strip()
-    return {"command": raw}
+    return {"command": raw, "exec_mode": exec_mode}
 
 
 def cache_result_event(event: dict[str, Any]) -> None:
@@ -208,12 +208,12 @@ def ensure_local_watcher_running() -> None:
         )
 
 
-def cmd_submit(raw_parts: list[str], wait: bool) -> None:
+def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
     ensure_local_watcher_running()
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
-    payload = {"input": build_submit_input(raw_parts)}
+    payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
 
     req = request.Request(
         url=f"{worker_url}/jobs",
@@ -430,7 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="hpc_queue control CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    submit = sub.add_parser("submit", help="submit a shell command job")
+    submit = sub.add_parser("submit", help="submit a shell command job (inside Apptainer)")
     submit.add_argument(
         "--wait",
         action="store_true",
@@ -440,6 +440,17 @@ def build_parser() -> argparse.ArgumentParser:
         "payload",
         nargs=argparse.REMAINDER,
         help="shell command to run inside the container",
+    )
+    host = sub.add_parser("host", help="submit a shell command job to run directly on HPC host")
+    host.add_argument(
+        "--wait",
+        action="store_true",
+        help="wait until local result file exists (default submits and returns immediately)",
+    )
+    host.add_argument(
+        "payload",
+        nargs=argparse.REMAINDER,
+        help="shell command to run on host (outside the container)",
     )
 
     login = sub.add_parser("login", help="configure local .env")
@@ -459,7 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "login", "start", "worker", "results", "logs", "status", "stop"}
+    known_commands = {"submit", "host", "login", "start", "worker", "results", "logs", "status", "stop"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
@@ -467,7 +478,9 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     if args.command == "submit":
-        cmd_submit(args.payload, args.wait)
+        cmd_submit(args.payload, args.wait, exec_mode="container")
+    elif args.command == "host":
+        cmd_submit(args.payload, args.wait, exec_mode="host")
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,

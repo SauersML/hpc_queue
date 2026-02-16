@@ -35,6 +35,13 @@ q submit "python /work/script.py --iters 100"
 q python3 /work/thisfile.py
 ```
 
+Submit a host command job (outside Apptainer on HPC node):
+
+```bash
+q host "nproc"
+q host "top -n 1"
+```
+
 `q submit` now returns immediately by default.
 It starts a background local results watcher and writes:
 - `local-results/<job_id>.json`
