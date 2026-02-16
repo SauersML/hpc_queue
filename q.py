@@ -8,7 +8,6 @@ import os
 import secrets
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -19,7 +18,6 @@ PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 CRON_TAG = "HPC_QUEUE_WATCHDOG"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
-DEFAULT_IMAGE_REFRESH_HOURS = 12
 
 
 def load_dotenv(path: Path) -> None:
@@ -138,21 +136,8 @@ def cmd_submit(raw_input: str) -> None:
 
 
 def maybe_refresh_image() -> None:
-    image_path = Path(
-        os.getenv("APPTAINER_IMAGE", "/Users/user/hpc_queue/runtime/hpc-queue-runtime.sif")
-    )
-    refresh_hours = int(os.getenv("IMAGE_REFRESH_HOURS", str(DEFAULT_IMAGE_REFRESH_HOURS)))
-
-    needs_update = not image_path.exists()
-    if image_path.exists():
-        age_seconds = time.time() - image_path.stat().st_mtime
-        needs_update = age_seconds > refresh_hours * 3600
-
-    if needs_update:
-        print("refreshing Apptainer image...")
-        run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
-    else:
-        print("Apptainer image is fresh; skipping update")
+    print("refreshing Apptainer image...")
+    run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
 
 
 def cmd_worker() -> None:

@@ -59,5 +59,4 @@ python3 /Users/user/hpc_queue/q.py stop
 
 ## How worker image updates happen
 
-`q.py worker` checks local `.sif` freshness and refreshes automatically when needed.
-Default refresh interval is 12 hours. Override with `IMAGE_REFRESH_HOURS` in `.env`.
+`q.py worker` always refreshes the local `.sif` before starting the worker.
