@@ -190,7 +190,8 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--queue-token", help="Cloudflare queue API token (HPC_QUEUE_KEY)")
     login.add_argument("--api-key", help="Worker API key for /jobs auth; auto-generated if omitted")
     login.add_argument("--worker-url", default=DEFAULT_WORKER_URL, help="Worker base URL")
-    sub.add_parser("worker", help="start compute worker and install cron watchdog")
+    sub.add_parser("start", help="start compute worker and install cron watchdog")
+    sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull results on local machine")
     sub.add_parser("status", help="show worker/cron status")
     sub.add_parser("stop", help="stop worker process")
@@ -211,7 +212,7 @@ def main() -> None:
             api_key=args.api_key,
             worker_url=args.worker_url,
         )
-    elif args.command == "worker":
+    elif args.command in {"start", "worker"}:
         cmd_worker()
     elif args.command == "results":
         cmd_results()

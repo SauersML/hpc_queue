@@ -38,7 +38,7 @@ python3 /Users/user/hpc_queue/q.py results
 Start worker + auto image refresh + cron watchdog in one command:
 
 ```bash
-python3 /Users/user/hpc_queue/q.py worker
+python3 /Users/user/hpc_queue/q.py start
 ```
 
 Check status:
@@ -55,10 +55,12 @@ python3 /Users/user/hpc_queue/q.py stop
 
 ## How worker image updates happen
 
-`q.py worker` resolves the remote image digest first.
+`q.py start` resolves the remote image digest first.
 - If digest is unchanged, it skips pull.
 - If digest changed, it pulls and updates the local `.sif`.
 
 This gives both properties:
 - never stale (digest checked every startup)
 - no unnecessary re-pulls
+
+The running HPC consumer also checks digest before each job execution, so long-running workers stay fresh without forced re-pulls.

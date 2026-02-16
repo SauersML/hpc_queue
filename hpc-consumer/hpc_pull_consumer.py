@@ -24,6 +24,7 @@ DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_APPTAINER_IMAGE = "/Users/user/hpc_queue/runtime/hpc-queue-runtime.sif"
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 @dataclass
@@ -182,6 +183,12 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
     return str(output_path.resolve())
 
 
+def ensure_image_fresh() -> None:
+    """Ensure local SIF matches current remote digest before running a job."""
+    updater = ROOT_DIR / "hpc-consumer" / "scripts" / "update_apptainer_image.sh"
+    subprocess.run([str(updater)], cwd=str(ROOT_DIR), check=True)
+
+
 def enqueue_result(config: Config, job_id: str, status: str, result_pointer: str) -> None:
     payload = {
         "job_id": job_id,
@@ -227,6 +234,7 @@ def process_once(config: Config) -> None:
         try:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
+            ensure_image_fresh()
             result_pointer = run_compute(job, results_dir, config)
             enqueue_result(
                 config=config,
