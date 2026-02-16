@@ -4,14 +4,12 @@ interface Env {
 }
 
 type JobRequest = {
-  task: string;
   input: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
 
 type JobMessage = {
   job_id: string;
-  task: string;
   input: Record<string, unknown>;
   created_at: string;
   metadata?: Record<string, unknown>;
@@ -48,12 +46,8 @@ export default {
         return jsonResponse({ error: "invalid_json" }, 400);
       }
 
-      if (!payload?.task || typeof payload.task !== "string") {
-        return jsonResponse({ error: "task is required" }, 400);
-      }
       const job: JobMessage = {
         job_id: crypto.randomUUID(),
-        task: payload.task,
         input: payload.input ?? {},
         created_at: new Date().toISOString(),
         metadata: payload.metadata,

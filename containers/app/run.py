@@ -18,12 +18,10 @@ OUTPUT_PATH = Path("/work/output.json")
 def main() -> None:
     payload = json.loads(INPUT_PATH.read_text(encoding="utf-8"))
     job_id = str(payload.get("job_id", "unknown"))
-    task = str(payload.get("task", "unknown"))
     data = payload.get("input", {})
 
     result = {
         "job_id": job_id,
-        "task": task,
         "status": "completed",
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "result": {

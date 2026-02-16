@@ -27,7 +27,7 @@ cp /Users/user/hpc_queue/.env.example /Users/user/hpc_queue/.env
 curl -X POST "https://hpc-queue-producer.sauer354.workers.dev/jobs" \
   -H "content-type: application/json" \
   -H "x-api-key: <API_KEY>" \
-  -d '{"task":"simulate","input":{"iterations":100}}'
+  -d '{"input":{"iterations":100}}'
 ```
 
 ## Update local container image on compute node

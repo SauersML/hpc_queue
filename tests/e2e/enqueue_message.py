@@ -23,7 +23,6 @@ def main() -> None:
     payload = {
         "body": {
             "job_id": job_id,
-            "task": "ci-e2e",
             "input": {"iterations": 3, "source": "github-actions"},
         }
     }

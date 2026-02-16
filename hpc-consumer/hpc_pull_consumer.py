@@ -129,7 +129,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
     meta_path = job_dir / "meta.json"
 
     input_path.write_text(
-        json.dumps({"job_id": job_id, "task": job.get("task"), "input": job.get("input", {})}),
+        json.dumps({"job_id": job_id, "input": job.get("input", {})}),
         encoding="utf-8",
     )
 
@@ -170,7 +170,6 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
             json.dumps(
                 {
                     "job_id": job_id,
-                    "task": job.get("task"),
                     "finished_at": finished,
                     "status": "completed",
                     "result": {"note": "container exited 0 but no output.json produced"},
