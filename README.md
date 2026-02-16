@@ -25,12 +25,6 @@ Run one command to configure:
 q login
 ```
 
-If your runtime image in GHCR is private, include GHCR creds during login:
-
-```bash
-q login --ghcr-token <token> --ghcr-username <github-user>
-```
-
 ## Local machine
 
 Submit a command job:
@@ -63,7 +57,7 @@ Start worker + auto image refresh + cron watchdog in one command:
 q start
 ```
 
-On first run with no local image, `q start` will prompt for GHCR credentials if needed.
+If `q start` fails, verify `apptainer` is installed and your `APPTAINER_OCI_REF` is valid.
 
 Check status:
 

@@ -18,6 +18,12 @@ set +a
 : "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime-open:latest}"
 : "${PYTHON_BIN:=python3}"
 
+if ! command -v "$APPTAINER_BIN" >/dev/null 2>&1; then
+  echo "error: APPTAINER_BIN not found: $APPTAINER_BIN" >&2
+  echo "install Apptainer or set APPTAINER_BIN in .env" >&2
+  exit 1
+fi
+
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
 
 TMP_IMAGE="${APPTAINER_IMAGE}.tmp"
@@ -65,10 +71,7 @@ try:
         token_data = json.loads(resp.read().decode("utf-8"))
 except urllib.error.HTTPError as exc:
     if exc.code in (401, 403):
-        raise SystemExit(
-            "registry token unauthorized (401/403); set GHCR_TOKEN (and optionally GHCR_USERNAME) "
-            "if the image is private"
-        )
+        raise SystemExit("registry token unauthorized (401/403)")
     raise
 token = token_data.get("token") or token_data.get("access_token")
 if not token:
@@ -94,10 +97,7 @@ try:
         digest = resp.headers.get("Docker-Content-Digest", "").strip()
 except urllib.error.HTTPError as exc:
     if exc.code in (401, 403):
-        raise SystemExit(
-            "manifest unauthorized (401/403); set GHCR_TOKEN (and optionally GHCR_USERNAME) "
-            "if the image is private"
-        )
+        raise SystemExit("manifest unauthorized (401/403)")
     raise
 if not digest:
     raise SystemExit("failed to resolve remote digest")
@@ -121,7 +121,6 @@ if ! REMOTE_DIGEST="$(resolve_remote_digest)"; then
   fi
 
   echo "error: failed to refresh image." >&2
-  echo "if image is private, add GHCR_TOKEN to .env (and GHCR_USERNAME if needed)." >&2
   exit 1
 fi
 

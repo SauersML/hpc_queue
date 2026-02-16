@@ -17,6 +17,8 @@ ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 CRON_TAG = "HPC_QUEUE_WATCHDOG"
 DEFAULT_APPTAINER_IMAGE = str(ROOT / "runtime" / "hpc-queue-runtime.sif")
+OLD_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime:latest"
+DEFAULT_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime-open:latest"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
 
@@ -71,12 +73,7 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
     path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
 
-def cmd_login(
-    queue_token: str | None,
-    api_key: str | None,
-    ghcr_token: str | None,
-    ghcr_username: str | None,
-) -> None:
+def cmd_login(queue_token: str | None, api_key: str | None) -> None:
     existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
     existing_api_key = os.getenv("API_KEY", "")
 
@@ -99,10 +96,6 @@ def cmd_login(
         "WORKER_URL": worker_url,
         "PYTHON_BIN": sys.executable,
     }
-    if ghcr_token:
-        updates["GHCR_TOKEN"] = ghcr_token
-    if ghcr_username:
-        updates["GHCR_USERNAME"] = ghcr_username
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
 
@@ -148,33 +141,26 @@ def get_apptainer_image_path() -> Path:
     return Path(os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE)).expanduser()
 
 
-def prompt_ghcr_credentials() -> bool:
-    token = getpass.getpass("ghcr-token (for first image pull): ").strip()
-    if not token:
-        return False
-    username = input("ghcr-username (optional, press Enter to skip): ").strip()
-    updates = {"GHCR_TOKEN": token}
-    if username:
-        updates["GHCR_USERNAME"] = username
-    upsert_env(ENV_PATH, updates)
-    load_dotenv(ENV_PATH)
-    return True
-
-
 def maybe_refresh_image() -> None:
     print("refreshing Apptainer image...")
     try:
         run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
     except subprocess.CalledProcessError as exc:
-        image_path = get_apptainer_image_path()
-        if not image_path.exists() and not os.getenv("GHCR_TOKEN") and sys.stdin.isatty():
-            print("no local image found; ghcr auth is required for first pull")
-            if prompt_ghcr_credentials():
-                run([str(ROOT / "hpc-consumer" / "scripts" / "update_apptainer_image.sh")], cwd=ROOT)
-                return
         raise RuntimeError(
-            "image refresh failed. If your GHCR image is private, set GHCR_TOKEN in .env and rerun `q start`."
+            "image refresh failed. verify APPTAINER_BIN is installed and APPTAINER_OCI_REF is reachable."
         ) from exc
+
+
+def migrate_legacy_image_ref() -> None:
+    current_ref = os.getenv("APPTAINER_OCI_REF", "").strip()
+    if current_ref != OLD_APPTAINER_OCI_REF:
+        return
+    upsert_env(ENV_PATH, {"APPTAINER_OCI_REF": DEFAULT_APPTAINER_OCI_REF})
+    os.environ["APPTAINER_OCI_REF"] = DEFAULT_APPTAINER_OCI_REF
+    print(
+        "updated APPTAINER_OCI_REF to public image "
+        f"{DEFAULT_APPTAINER_OCI_REF}"
+    )
 
 
 def cmd_worker() -> None:
@@ -269,8 +255,6 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
-    login.add_argument("--ghcr-token", help="ghcr-token for pulling private runtime image")
-    login.add_argument("--ghcr-username", help="ghcr username for the token (optional)")
     sub.add_parser("start", help="start compute worker and install cron watchdog")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
@@ -284,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     load_dotenv(ENV_PATH)
+    migrate_legacy_image_ref()
     parser = build_parser()
     known_commands = {"submit", "login", "start", "worker", "results", "logs", "status", "stop"}
     argv = sys.argv[1:]
@@ -298,8 +283,6 @@ def main() -> None:
         cmd_login(
             queue_token=args.queue_token,
             api_key=args.api_key,
-            ghcr_token=args.ghcr_token,
-            ghcr_username=args.ghcr_username,
         )
     elif args.command in {"start", "worker"}:
         cmd_worker()
