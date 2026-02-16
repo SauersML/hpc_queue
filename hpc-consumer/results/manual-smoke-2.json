@@ -1,0 +1,12 @@
+{
+  "job_id": "manual-smoke-2",
+  "task": "simulate",
+  "finished_at": "2026-02-15T23:36:30.683196+00:00",
+  "status": "completed",
+  "result": {
+    "summary": "demo result",
+    "input": {
+      "x": 2
+    }
+  }
+}

@@ -1,0 +1,10 @@
+name = "hpc-queue-producer"
+main = "src/index.ts"
+compatibility_date = "2026-02-15"
+
+[[queues.producers]]
+queue = "hpc-jobs"
+binding = "HPC_QUEUE"
+
+[observability.logs]
+enabled = true

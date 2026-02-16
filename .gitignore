@@ -1,0 +1,17 @@
+# Node
+node_modules/
+.npm/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env
+.env
+*.local
+
+# Tooling
+.wrangler/
+.DS_Store

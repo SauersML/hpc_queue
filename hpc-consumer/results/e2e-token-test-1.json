@@ -1,0 +1,13 @@
+{
+  "job_id": "e2e-token-test-1",
+  "task": "simulate",
+  "finished_at": "2026-02-16T00:14:05.354294+00:00",
+  "status": "completed",
+  "result": {
+    "summary": "demo result",
+    "input": {
+      "dataset": "token-test",
+      "iterations": 5
+    }
+  }
+}

@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""HPC pull consumer for Cloudflare Queues.
+
+This process runs on the compute node and repeatedly:
+1) pulls jobs from Cloudflare Queues
+2) runs compute work
+3) acknowledges success or marks failed jobs for retry
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import subprocess
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from urllib import request
+
+
+@dataclass
+class Config:
+    account_id: str
+    jobs_queue_id: str
+    results_queue_id: str
+    api_token: str
+    batch_size: int = 5
+    visibility_timeout_ms: int = 120000
+    poll_interval_seconds: float = 2.0
+    retry_delay_seconds: int = 30
+    results_dir: str = "results"
+    apptainer_image: str = ""
+    apptainer_bin: str = "apptainer"
+    apptainer_bind: str = ""
+    container_cmd: str = "python /app/run.py"
+
+    @property
+    def jobs_api_base(self) -> str:
+        return (
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{self.account_id}/queues/{self.jobs_queue_id}/messages"
+        )
+
+    @property
+    def results_api_base(self) -> str:
+        return (
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{self.account_id}/queues/{self.results_queue_id}/messages"
+        )
+
+
+def load_config() -> Config:
+    def req(name: str) -> str:
+        val = os.getenv(name)
+        if not val:
+            raise RuntimeError(f"Missing required env var: {name}")
+        return val
+
+    return Config(
+        account_id=req("CF_ACCOUNT_ID"),
+        jobs_queue_id=req("CF_JOBS_QUEUE_ID"),
+        results_queue_id=req("CF_RESULTS_QUEUE_ID"),
+        api_token=req("CF_QUEUES_API_TOKEN"),
+        batch_size=int(os.getenv("BATCH_SIZE", "5")),
+        visibility_timeout_ms=int(os.getenv("VISIBILITY_TIMEOUT_MS", "120000")),
+        poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
+        retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
+        results_dir=os.getenv("RESULTS_DIR", "results"),
+        apptainer_image=req("APPTAINER_IMAGE"),
+        apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
+        apptainer_bind=os.getenv("APPTAINER_BIND", ""),
+        container_cmd=os.getenv(
+            "CONTAINER_CMD",
+            "python /app/run.py",
+        ),
+    )
+
+
+def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        url=url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    with request.urlopen(req, timeout=30) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw)
+
+
+def decode_message_body(body: Any) -> dict[str, Any]:
+    if isinstance(body, dict):
+        return body
+
+    if isinstance(body, str):
+        # Pull consumers often receive json content base64-encoded.
+        try:
+            decoded = base64.b64decode(body)
+            return json.loads(decoded.decode("utf-8"))
+        except Exception:
+            try:
+                return json.loads(body)
+            except Exception as exc:
+                raise ValueError(f"Unable to decode message body: {body}") from exc
+
+    raise ValueError(f"Unsupported body type: {type(body)}")
+
+
+def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> str:
+    """Run compute directly on node using Apptainer."""
+    job_id = str(job.get("job_id", "unknown"))
+    job_dir = results_dir / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    input_path = job_dir / "input.json"
+    output_path = job_dir / "output.json"
+    meta_path = job_dir / "meta.json"
+
+    input_path.write_text(
+        json.dumps({"job_id": job_id, "task": job.get("task"), "input": job.get("input", {})}),
+        encoding="utf-8",
+    )
+
+    cmd = [
+        config.apptainer_bin,
+        "exec",
+        "--bind",
+        f"{job_dir}:/work",
+    ]
+    if config.apptainer_bind:
+        cmd.extend(["--bind", config.apptainer_bind])
+    cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])
+
+    started = datetime.now(timezone.utc).isoformat()
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    finished = datetime.now(timezone.utc).isoformat()
+
+    meta = {
+        "job_id": job_id,
+        "status": "completed" if proc.returncode == 0 else "failed",
+        "started_at": started,
+        "finished_at": finished,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[-8000:],
+        "stderr": proc.stderr[-8000:],
+        "input_path": str(input_path.resolve()),
+        "output_path": str(output_path.resolve()),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"apptainer command failed for {job_id} rc={proc.returncode}: {proc.stderr[-500:]}"
+        )
+
+    if not output_path.exists():
+        output_path.write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "task": job.get("task"),
+                    "finished_at": finished,
+                    "status": "completed",
+                    "result": {"note": "container exited 0 but no output.json produced"},
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    return str(output_path.resolve())
+
+
+def enqueue_result(config: Config, job_id: str, status: str, result_pointer: str) -> None:
+    payload = {
+        "job_id": job_id,
+        "status": status,
+        "result_pointer": result_pointer,
+    }
+    cf_post(
+        url=config.results_api_base,
+        token=config.api_token,
+        payload={"body": payload},
+    )
+
+
+def process_once(config: Config) -> None:
+    pull_resp = cf_post(
+        url=f"{config.jobs_api_base}/pull",
+        token=config.api_token,
+        payload={
+            "batch_size": config.batch_size,
+            "visibility_timeout": config.visibility_timeout_ms,
+        },
+    )
+
+    result = pull_resp.get("result", {})
+    if isinstance(result, dict):
+        messages = result.get("messages", [])
+    elif isinstance(result, list):
+        messages = result
+    else:
+        messages = []
+    if not messages:
+        return
+
+    acks: list[dict[str, str]] = []
+    retries: list[dict[str, Any]] = []
+    results_dir = Path(config.results_dir)
+
+    for message in messages:
+        lease_id = message.get("lease_id")
+        if not lease_id:
+            continue
+
+        try:
+            job = decode_message_body(message.get("body"))
+            job_id = str(job.get("job_id", "unknown"))
+            result_pointer = run_compute(job, results_dir, config)
+            enqueue_result(
+                config=config,
+                job_id=job_id,
+                status="completed",
+                result_pointer=result_pointer,
+            )
+            acks.append({"lease_id": lease_id})
+            print(f"completed job {job_id} -> {result_pointer}")
+        except Exception as exc:
+            print(f"failed to process message: {exc}")
+            retries.append(
+                {
+                    "lease_id": lease_id,
+                    "delay_seconds": config.retry_delay_seconds,
+                }
+            )
+
+    if acks or retries:
+        cf_post(
+            url=f"{config.jobs_api_base}/ack",
+            token=config.api_token,
+            payload={"acks": acks, "retries": retries},
+        )
+
+
+def main() -> None:
+    config = load_config()
+    print("starting hpc pull consumer")
+    print(
+        json.dumps(
+            {
+                "jobs_queue_id": config.jobs_queue_id,
+                "results_queue_id": config.results_queue_id,
+                "batch_size": config.batch_size,
+                "visibility_timeout_ms": config.visibility_timeout_ms,
+                "poll_interval_seconds": config.poll_interval_seconds,
+            }
+        )
+    )
+
+    while True:
+        try:
+            process_once(config)
+        except Exception as exc:
+            print(f"poll loop error: {exc}")
+        time.sleep(config.poll_interval_seconds)
+
+
+if __name__ == "__main__":
+    main()

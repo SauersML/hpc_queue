@@ -1,0 +1,12 @@
+{
+  "job_id": "dual-queue-smoke-1",
+  "task": "simulate",
+  "finished_at": "2026-02-15T23:43:09.645577+00:00",
+  "status": "completed",
+  "result": {
+    "summary": "demo result",
+    "input": {
+      "n": 7
+    }
+  }
+}
