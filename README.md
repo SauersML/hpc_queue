@@ -148,7 +148,7 @@ Start worker + auto image refresh in one command:
 q start
 ```
 
-If `q start` fails, verify `apptainer` is installed and `APPTAINER_SIF_URL` is reachable.
+If `q start` fails, verify `apptainer` is installed and GitHub release download is reachable.
 
 Check status:
 

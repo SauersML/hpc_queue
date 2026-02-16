@@ -303,7 +303,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "returncode": proc.returncode,
         "staged_files": staged_files,
         "synced_repos": synced_repos,
-        "stdout_tail": tail_text(stdout_path),
+        "stdout_tail": (tail_text(apptainer_stdout_path) + tail_text(stdout_path))[-8000:],
         "stderr_tail": (tail_text(apptainer_stderr_path) + tail_text(stderr_path))[-8000:],
         "stdout_path": str(stdout_path.resolve()),
         "stderr_path": str(stderr_path.resolve()),
