@@ -55,12 +55,23 @@ if [[ -f "$APPTAINER_IMAGE" && "$LOCAL_DIGEST" == "$REMOTE_DIGEST" ]]; then
 fi
 
 echo "digest changed ($LOCAL_DIGEST -> $REMOTE_DIGEST), downloading SIF"
-curl -fsSL "$APPTAINER_SIF_URL" -o "$TMP_IMAGE"
+if ! curl -fsSL "$APPTAINER_SIF_URL" -o "$TMP_IMAGE"; then
+  if [[ -f "$APPTAINER_IMAGE" ]]; then
+    echo "warning: failed to download new SIF ($APPTAINER_SIF_URL); keeping existing local image" >&2
+    exit 0
+  fi
+  echo "error: failed to download SIF and no local image exists" >&2
+  exit 1
+fi
 
 DOWNLOADED_DIGEST="$(sha256sum "$TMP_IMAGE" | awk '{print $1}')"
 if [[ "$DOWNLOADED_DIGEST" != "$REMOTE_DIGEST" ]]; then
   echo "error: SIF digest mismatch ($DOWNLOADED_DIGEST != $REMOTE_DIGEST)" >&2
   rm -f "$TMP_IMAGE"
+  if [[ -f "$APPTAINER_IMAGE" ]]; then
+    echo "warning: keeping existing local image after digest mismatch" >&2
+    exit 0
+  fi
   exit 1
 fi
 
