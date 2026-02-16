@@ -29,6 +29,7 @@ RUN apt-get update \
         make \
         pkg-config \
         procps \
+        time \
         unzip \
         vim \
         wget \
