@@ -15,12 +15,41 @@ type JobMessage = {
   metadata?: Record<string, unknown>;
 };
 
+const ADJECTIVES = [
+  "agile", "amber", "ancient", "arctic", "bold", "brisk", "calm", "cobalt", "crimson",
+  "curious", "daring", "deep", "eager", "electric", "fierce", "final", "gentle", "golden",
+  "grand", "hidden", "icy", "jovial", "keen", "lively", "lunar", "magic", "mellow", "midnight",
+  "misty", "modern", "nimble", "noble", "opal", "pearl", "polar", "primal", "quick", "rapid",
+  "royal", "silent", "silver", "solar", "stellar", "swift", "tidy", "urban", "velvet", "vivid",
+  "wild", "wise", "young", "zesty",
+];
+
+const NOUNS = [
+  "anchor", "apex", "archive", "arrow", "atlas", "aurora", "beacon", "binary", "bridge", "canyon",
+  "cascade", "cinder", "citadel", "cloud", "comet", "compass", "cosmos", "crater", "crest", "delta",
+  "domain", "ember", "engine", "falcon", "fjord", "forest", "forge", "frontier", "galaxy", "harbor",
+  "helios", "horizon", "island", "jungle", "kernel", "lagoon", "lantern", "matrix", "meadow", "meteor",
+  "nebula", "nexus", "oak", "oasis", "ocean", "orbit", "origin", "phoenix", "planet", "portal",
+  "prairie", "quartz", "radar", "reef", "relay", "rocket", "signal", "summit", "thunder", "uplink",
+  "valley", "vector", "vortex", "willow", "zenith",
+];
+
+function randomItem(items: readonly string[]): string {
+  const idx = crypto.getRandomValues(new Uint32Array(1))[0] % items.length;
+  return items[idx]!;
+}
+
 function shortJobId(): string {
-  const ts = Date.now().toString(36);
-  const bytes = new Uint8Array(4);
+  const adjective = randomItem(ADJECTIVES);
+  const noun = randomItem(NOUNS);
+  const altNoun = randomItem(NOUNS);
+  const pattern = crypto.getRandomValues(new Uint32Array(1))[0] % 3;
+  const bytes = new Uint8Array(3);
   crypto.getRandomValues(bytes);
-  const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 6);
-  return `j${ts}${rand}`;
+  const suffix = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  if (pattern === 0) return `${adjective}-${noun}-${suffix}`;
+  if (pattern === 1) return `${noun}-${adjective}-${suffix}`;
+  return `${noun}-${altNoun}-${suffix}`;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

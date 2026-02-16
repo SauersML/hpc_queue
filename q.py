@@ -170,7 +170,16 @@ def wait_for_local_result_file(job_id: str) -> Path:
         time.sleep(poll_seconds)
 
 
+def _tail_text(path: Path, lines: int = 20) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    chunks = text.splitlines()
+    return "\n".join(chunks[-lines:])
+
+
 def ensure_local_watcher_running() -> None:
+    require_env("CF_QUEUES_API_TOKEN")
     if LOCAL_WATCHER_PID_FILE.exists():
         pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
         if process_matches(pid, "local_pull_results.py --loop"):
@@ -180,19 +189,29 @@ def ensure_local_watcher_running() -> None:
     LOCAL_WATCHER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.setdefault("PYTHON_BIN", sys.executable)
+    env.setdefault("PYTHONUNBUFFERED", "1")
     with LOCAL_WATCHER_LOG_FILE.open("a", encoding="utf-8") as log_fp:
         proc = subprocess.Popen(
-            [sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py"), "--loop"],
+            [sys.executable, "-u", str(ROOT / "local-consumer" / "local_pull_results.py"), "--loop"],
             cwd=str(ROOT),
             stdout=log_fp,
             stderr=subprocess.STDOUT,
             env=env,
         )
     LOCAL_WATCHER_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+    time.sleep(0.8)
+    if not process_matches(str(proc.pid), "local_pull_results.py --loop"):
+        tail = _tail_text(LOCAL_WATCHER_LOG_FILE, lines=30)
+        raise RuntimeError(
+            "local result watcher failed to start. "
+            f"check {LOCAL_WATCHER_LOG_FILE}.\n{tail}"
+        )
 
 
 def cmd_submit(raw_parts: list[str], wait: bool) -> None:
     api_key = require_env("API_KEY")
+    require_env("CF_QUEUES_API_TOKEN")
+    ensure_local_watcher_running()
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
     payload = {"input": build_submit_input(raw_parts)}
 
@@ -218,7 +237,6 @@ def cmd_submit(raw_parts: list[str], wait: bool) -> None:
         with request.urlopen(req, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         print(json.dumps(body, indent=2))
-        ensure_local_watcher_running()
         job_id = str(body.get("job_id", "")).strip()
         if not job_id:
             raise RuntimeError("submit succeeded but missing job_id")
