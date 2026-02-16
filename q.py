@@ -18,10 +18,10 @@ ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
 RESULTS_CACHE_PATH = ROOT / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = ROOT / "local-results"
+LOCAL_WATCHER_PID_FILE = ROOT / "local-consumer" / "local_results_watcher.pid"
+LOCAL_WATCHER_LOG_FILE = ROOT / "local-consumer" / "local_results_watcher.log"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
-DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
-DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 
 
 def load_dotenv(path: Path) -> None:
@@ -46,6 +46,18 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
     env = os.environ.copy()
     env.setdefault("PYTHON_BIN", sys.executable)
     subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=True, env=env)
+
+
+def process_matches(pid: str, needle: str) -> bool:
+    if not pid:
+        return False
+    probe = subprocess.run(["kill", "-0", pid], capture_output=True)
+    if probe.returncode != 0:
+        return False
+    ps = subprocess.run(["ps", "-p", pid, "-o", "command="], capture_output=True, text=True)
+    if ps.returncode != 0:
+        return False
+    return needle in (ps.stdout or "")
 
 
 def upsert_env(path: Path, updates: dict[str, str]) -> None:
@@ -114,39 +126,6 @@ def build_submit_input(raw_parts: list[str]) -> dict[str, Any]:
     return {"command": raw}
 
 
-def results_api_base() -> str:
-    account_id = os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID)
-    results_queue_id = os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID)
-    return (
-        "https://api.cloudflare.com/client/v4/accounts/"
-        f"{account_id}/queues/{results_queue_id}/messages"
-    )
-
-
-def cf_post(url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        url=url,
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-    )
-    with request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def parse_result_messages(resp: dict[str, Any]) -> list[dict[str, Any]]:
-    result = resp.get("result", {})
-    if isinstance(result, dict):
-        return result.get("messages", [])
-    if isinstance(result, list):
-        return result
-    return []
-
-
 def cache_result_event(event: dict[str, Any]) -> None:
     RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
@@ -159,67 +138,30 @@ def write_local_result_file(event: dict[str, Any]) -> Path | None:
     if not job_id or status not in {"completed", "failed"}:
         return None
     LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    record = dict(event)
+    stdout_tail = str(record.pop("stdout_tail", ""))
+    stderr_tail = str(record.pop("stderr_tail", ""))
+    if stdout_tail:
+        stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+        stdout_path.write_text(stdout_tail, encoding="utf-8")
+        record["stdout_tail_file"] = str(stdout_path)
+    if stderr_tail:
+        stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+        stderr_path.write_text(stderr_tail, encoding="utf-8")
+        record["stderr_tail_file"] = str(stderr_path)
     out_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
-    out_path.write_text(json.dumps(event, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return out_path
 
 
-def pull_results_once(queue_token: str) -> list[dict[str, Any]]:
-    pulled = cf_post(
-        url=f"{results_api_base()}/pull",
-        token=queue_token,
-        payload={
-            "batch_size": int(os.getenv("RESULTS_BATCH_SIZE", "10")),
-            "visibility_timeout": int(os.getenv("RESULTS_VISIBILITY_TIMEOUT_MS", "120000")),
-        },
-    )
-    messages = parse_result_messages(pulled)
-    if not messages:
-        return []
-
-    acks: list[dict[str, str]] = []
-    events: list[dict[str, Any]] = []
-    for message in messages:
-        lease_id = message.get("lease_id")
-        if not lease_id:
-            continue
-        body = message.get("body")
-        if isinstance(body, str):
-            try:
-                body = json.loads(body)
-            except Exception:
-                body = {"raw": body}
-        if isinstance(body, dict):
-            events.append(body)
-            cache_result_event(body)
-            write_local_result_file(body)
-        acks.append({"lease_id": lease_id})
-
-    if acks:
-        cf_post(
-            url=f"{results_api_base()}/ack",
-            token=queue_token,
-            payload={"acks": acks, "retries": []},
-        )
-    return events
-
-
-def wait_for_job_result(job_id: str, queue_token: str) -> Path:
+def wait_for_local_result_file(job_id: str) -> Path:
+    result_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
     poll_seconds = float(os.getenv("RESULTS_POLL_INTERVAL_SECONDS", "2"))
     last_heartbeat = time.monotonic()
     while True:
-        events = pull_results_once(queue_token)
-        for event in events:
-            if str(event.get("job_id")) != job_id:
-                continue
-            status = str(event.get("status", ""))
-            if status in {"completed", "failed"}:
-                out_path = write_local_result_file(event)
-                if out_path is None:
-                    raise RuntimeError("internal error: missing result file path")
-                print(json.dumps(event, indent=2))
-                print(f"local_result_file: {out_path}")
-                return out_path
+        if result_path.exists():
+            print(f"local_result_file: {result_path}")
+            return result_path
 
         now = time.monotonic()
         if now - last_heartbeat >= 30:
@@ -228,7 +170,28 @@ def wait_for_job_result(job_id: str, queue_token: str) -> Path:
         time.sleep(poll_seconds)
 
 
-def cmd_submit(raw_parts: list[str], no_wait: bool) -> None:
+def ensure_local_watcher_running() -> None:
+    if LOCAL_WATCHER_PID_FILE.exists():
+        pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
+        if process_matches(pid, "local_pull_results.py --loop"):
+            return
+
+    LOCAL_WATCHER_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LOCAL_WATCHER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.setdefault("PYTHON_BIN", sys.executable)
+    with LOCAL_WATCHER_LOG_FILE.open("a", encoding="utf-8") as log_fp:
+        proc = subprocess.Popen(
+            [sys.executable, str(ROOT / "local-consumer" / "local_pull_results.py"), "--loop"],
+            cwd=str(ROOT),
+            stdout=log_fp,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+    LOCAL_WATCHER_PID_FILE.write_text(str(proc.pid), encoding="utf-8")
+
+
+def cmd_submit(raw_parts: list[str], wait: bool) -> None:
     api_key = require_env("API_KEY")
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
     payload = {"input": build_submit_input(raw_parts)}
@@ -255,13 +218,15 @@ def cmd_submit(raw_parts: list[str], no_wait: bool) -> None:
         with request.urlopen(req, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         print(json.dumps(body, indent=2))
-        if no_wait:
-            return
+        ensure_local_watcher_running()
         job_id = str(body.get("job_id", "")).strip()
         if not job_id:
             raise RuntimeError("submit succeeded but missing job_id")
-        queue_token = require_env("CF_QUEUES_API_TOKEN")
-        wait_for_job_result(job_id=job_id, queue_token=queue_token)
+        if not wait:
+            print(f"job queued: {job_id}")
+            print("result will be written to local-results/<job_id>.json when completed")
+            return
+        wait_for_local_result_file(job_id=job_id)
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
@@ -296,8 +261,40 @@ def cmd_logs(job_id: str) -> None:
     meta_path = job_dir / "meta.json"
     stdout_path = job_dir / "stdout.log"
     stderr_path = job_dir / "stderr.log"
+    local_result_json = LOCAL_RESULTS_DIR / f"{job_id}.json"
+    local_stdout = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+    local_stderr = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
 
     if not job_dir.exists():
+        if local_result_json.exists():
+            record = json.loads(local_result_json.read_text(encoding="utf-8"))
+            print(
+                json.dumps(
+                    {
+                        "job_id": record.get("job_id"),
+                        "status": record.get("status"),
+                        "exit_code": record.get("exit_code"),
+                        "started_at": record.get("started_at"),
+                        "finished_at": record.get("finished_at"),
+                        "result_pointer": record.get("result_pointer"),
+                        "source": "local-results",
+                    },
+                    indent=2,
+                )
+            )
+            print("\n=== stdout ===")
+            if local_stdout.exists():
+                print(local_stdout.read_text(encoding="utf-8"), end="")
+            else:
+                print("(missing)")
+            print("\n=== stderr ===")
+            if local_stderr.exists():
+                print(local_stderr.read_text(encoding="utf-8"), end="")
+            else:
+                print("(missing)")
+            print()
+            return
+
         if RESULTS_CACHE_PATH.exists():
             last_match: dict[str, Any] | None = None
             for line in RESULTS_CACHE_PATH.read_text(encoding="utf-8").splitlines():
@@ -372,18 +369,35 @@ def cmd_status() -> None:
     pid = ""
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
-        if pid:
-            proc = subprocess.run(["kill", "-0", pid], capture_output=True)
-            running = proc.returncode == 0
+        running = process_matches(pid, "hpc_pull_consumer.py")
 
-    print(json.dumps({"running": running, "pid": pid or None}))
+    local_running = False
+    local_pid = ""
+    if LOCAL_WATCHER_PID_FILE.exists():
+        local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
+        local_running = process_matches(local_pid, "local_pull_results.py --loop")
+
+    print(
+        json.dumps(
+            {
+                "running": running,
+                "pid": pid or None,
+                "local_results_watcher_running": local_running,
+                "local_results_watcher_pid": local_pid or None,
+            }
+        )
+    )
 
 
 def cmd_stop() -> None:
     if PID_FILE.exists():
         pid = PID_FILE.read_text(encoding="utf-8").strip()
-        if pid:
+        if process_matches(pid, "hpc_pull_consumer.py"):
             subprocess.run(["kill", pid], check=False)
+    if LOCAL_WATCHER_PID_FILE.exists():
+        local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
+        if process_matches(local_pid, "local_pull_results.py --loop"):
+            subprocess.run(["kill", local_pid], check=False)
     print("stop signal sent")
 
 
@@ -393,9 +407,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     submit = sub.add_parser("submit", help="submit a shell command job")
     submit.add_argument(
-        "--no-wait",
+        "--wait",
         action="store_true",
-        help="queue job and return immediately (default waits for completion)",
+        help="wait until local result file exists (default submits and returns immediately)",
     )
     submit.add_argument(
         "payload",
@@ -428,7 +442,7 @@ def main() -> None:
     args = parser.parse_args(argv)
 
     if args.command == "submit":
-        cmd_submit(args.payload, args.no_wait)
+        cmd_submit(args.payload, args.wait)
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,

@@ -35,8 +35,17 @@ q submit "python /work/script.py --iters 100"
 q python3 /work/thisfile.py
 ```
 
-`q submit` waits until the job finishes by default and writes:
+`q submit` now returns immediately by default.
+It starts a background local results watcher and writes:
 - `local-results/<job_id>.json`
+- `local-results/<job_id>.stdout.log`
+- `local-results/<job_id>.stderr.log`
+
+Use blocking mode only when needed:
+
+```bash
+q submit --wait ls
+```
 
 Pull one batch of result messages:
 
@@ -52,7 +61,7 @@ View job logs on demand:
 q logs <job_id>
 ```
 
-`q logs` reads saved `stdout.log` and `stderr.log` from `hpc-consumer/results/<job_id>/`.
+`q logs` reads local files when available, and otherwise falls back to cached queue result tails.
 
 ## HPC node
 

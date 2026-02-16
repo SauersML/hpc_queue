@@ -14,6 +14,8 @@ __pycache__/
 hpc-consumer/results/*
 !hpc-consumer/results/.gitkeep
 local-consumer/results_cache.jsonl
+local-consumer/local_results_watcher.log
+local-consumer/local_results_watcher.pid
 local-results/
 
 # Tooling

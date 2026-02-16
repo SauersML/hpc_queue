@@ -6,8 +6,10 @@ Pulls one batch of result messages and acknowledges them after printing.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,8 +17,20 @@ from urllib import request
 
 DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "results_cache.jsonl"
 LOCAL_RESULTS_DIR = Path(__file__).resolve().parent.parent / "local-results"
+
+
+def load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
 
 
 @dataclass
@@ -26,6 +40,7 @@ class Config:
     api_token: str
     batch_size: int = 10
     visibility_timeout_ms: int = 120000
+    poll_interval_seconds: float = 2.0
 
     @property
     def results_api_base(self) -> str:
@@ -48,6 +63,7 @@ def load_config() -> Config:
         api_token=req("CF_QUEUES_API_TOKEN"),
         batch_size=int(os.getenv("RESULTS_BATCH_SIZE", "10")),
         visibility_timeout_ms=int(os.getenv("RESULTS_VISIBILITY_TIMEOUT_MS", "120000")),
+        poll_interval_seconds=float(os.getenv("RESULTS_POLL_INTERVAL_SECONDS", "2")),
     )
 
 
@@ -112,8 +128,19 @@ def process_once(config: Config) -> None:
             job_id = str(body.get("job_id", "")).strip()
             status = str(body.get("status", "")).strip()
             if job_id and status in {"completed", "failed"}:
+                record = dict(body)
+                stdout_tail = str(record.pop("stdout_tail", ""))
+                stderr_tail = str(record.pop("stderr_tail", ""))
+                if stdout_tail:
+                    stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+                    stdout_path.write_text(stdout_tail, encoding="utf-8")
+                    record["stdout_tail_file"] = str(stdout_path)
+                if stderr_tail:
+                    stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+                    stderr_path.write_text(stderr_tail, encoding="utf-8")
+                    record["stderr_tail_file"] = str(stderr_path)
                 (LOCAL_RESULTS_DIR / f"{job_id}.json").write_text(
-                    json.dumps(body, indent=2),
+                    json.dumps(record, indent=2),
                     encoding="utf-8",
                 )
         acks.append({"lease_id": lease_id})
@@ -127,12 +154,26 @@ def process_once(config: Config) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Pull local result events from queue")
+    parser.add_argument("--loop", action="store_true", help="run continuously in background")
+    args = parser.parse_args()
+
+    load_dotenv(ENV_PATH)
     config = load_config()
-    try:
-        process_once(config)
-    except Exception as exc:
-        print(f"results pull error: {exc}")
-        raise
+    if not args.loop:
+        try:
+            process_once(config)
+        except Exception as exc:
+            print(f"results pull error: {exc}")
+            raise
+        return
+
+    while True:
+        try:
+            process_once(config)
+        except Exception as exc:
+            print(f"results loop error: {exc}")
+        time.sleep(config.poll_interval_seconds)
 
 
 if __name__ == "__main__":
