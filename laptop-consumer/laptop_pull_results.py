@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 from urllib import request
 
+DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
+DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+
 
 @dataclass
 class Config:
@@ -39,8 +42,8 @@ def load_config() -> Config:
         return val
 
     return Config(
-        account_id=req("CF_ACCOUNT_ID"),
-        results_queue_id=req("CF_RESULTS_QUEUE_ID"),
+        account_id=os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID),
+        results_queue_id=os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID),
         api_token=req("CF_QUEUES_API_TOKEN"),
         batch_size=int(os.getenv("RESULTS_BATCH_SIZE", "10")),
         visibility_timeout_ms=int(os.getenv("RESULTS_VISIBILITY_TIMEOUT_MS", "120000")),

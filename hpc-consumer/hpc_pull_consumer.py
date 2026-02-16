@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any
 from urllib import request
 
+DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
+DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
+DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
+DEFAULT_APPTAINER_IMAGE = "/Users/user/hpc_queue/runtime/hpc-queue-runtime.sif"
+
 
 @dataclass
 class Config:
@@ -60,16 +65,16 @@ def load_config() -> Config:
         return val
 
     return Config(
-        account_id=req("CF_ACCOUNT_ID"),
-        jobs_queue_id=req("CF_JOBS_QUEUE_ID"),
-        results_queue_id=req("CF_RESULTS_QUEUE_ID"),
+        account_id=os.getenv("CF_ACCOUNT_ID", DEFAULT_CF_ACCOUNT_ID),
+        jobs_queue_id=os.getenv("CF_JOBS_QUEUE_ID", DEFAULT_CF_JOBS_QUEUE_ID),
+        results_queue_id=os.getenv("CF_RESULTS_QUEUE_ID", DEFAULT_CF_RESULTS_QUEUE_ID),
         api_token=req("CF_QUEUES_API_TOKEN"),
         batch_size=int(os.getenv("BATCH_SIZE", "5")),
         visibility_timeout_ms=int(os.getenv("VISIBILITY_TIMEOUT_MS", "120000")),
         poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
         results_dir=os.getenv("RESULTS_DIR", "results"),
-        apptainer_image=req("APPTAINER_IMAGE"),
+        apptainer_image=os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE),
         apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
         apptainer_bind=os.getenv("APPTAINER_BIND", ""),
         container_cmd=os.getenv(

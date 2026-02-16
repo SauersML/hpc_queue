@@ -12,8 +12,8 @@ source .env
 set +a
 
 : "${APPTAINER_BIN:=apptainer}"
-: "${APPTAINER_IMAGE:?APPTAINER_IMAGE must be set}"
-: "${APPTAINER_OCI_REF:?APPTAINER_OCI_REF must be set}"
+: "${APPTAINER_IMAGE:=/Users/user/hpc_queue/runtime/hpc-queue-runtime.sif}"
+: "${APPTAINER_OCI_REF:=ghcr.io/sauersml/hpc-queue-runtime:latest}"
 
 mkdir -p "$(dirname "$APPTAINER_IMAGE")"
 
