@@ -29,6 +29,7 @@ DEFAULT_PULL_BATCH_SIZE = 100
 DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_RETRY_DELAY_SECONDS = 30
+DEFAULT_MAX_RETRY_ATTEMPTS = 5
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_DIR = "results"
@@ -51,6 +52,7 @@ class Config:
     visibility_timeout_ms: int = 120000
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
+    max_retry_attempts: int = 5
     heartbeat_interval_seconds: float = 30.0
     results_dir: str = "results"
     apptainer_image: str = ""
@@ -93,6 +95,7 @@ def load_config() -> Config:
         visibility_timeout_ms=DEFAULT_VISIBILITY_TIMEOUT_MS,
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
+        max_retry_attempts=DEFAULT_MAX_RETRY_ATTEMPTS,
         heartbeat_interval_seconds=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
         results_dir=DEFAULT_RESULTS_DIR,
         apptainer_image=DEFAULT_APPTAINER_IMAGE,
@@ -462,7 +465,7 @@ def process_once(config: Config) -> None:
     retries: list[dict[str, Any]] = []
     results_dir = Path(config.results_dir)
 
-    def process_message(message: dict[str, Any]) -> str | None:
+    def process_message(message: dict[str, Any]) -> dict[str, Any] | None:
         lease_id = message.get("lease_id")
         if not lease_id:
             return None
@@ -501,10 +504,27 @@ def process_once(config: Config) -> None:
                 },
             )
             print(f"completed job {job_id} -> {result_pointer}")
-            return str(lease_id)
+            return {"action": "ack", "lease_id": str(lease_id)}
         except Exception as exc:
             err = str(exc)
             print(f"failed to process message job_id={job_id}: {err}")
+            attempts_raw = message.get("attempts", 0)
+            try:
+                attempts = int(attempts_raw)
+            except Exception:
+                attempts = 0
+            if attempts < config.max_retry_attempts:
+                print(
+                    "scheduling retry "
+                    f"job_id={job_id} attempts={attempts}/{config.max_retry_attempts} "
+                    f"delay={config.retry_delay_seconds}s"
+                )
+                return {
+                    "action": "retry",
+                    "lease_id": str(lease_id),
+                    "delay_seconds": config.retry_delay_seconds,
+                }
+
             now = datetime.now(timezone.utc).isoformat()
             try:
                 enqueue_result(
@@ -518,19 +538,33 @@ def process_once(config: Config) -> None:
                         "stderr_tail": err[-8000:],
                         "started_at": now,
                         "finished_at": now,
+                        "attempts": attempts,
                     },
                 )
             except Exception as enqueue_exc:
                 print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
-            return str(lease_id)
+            return {"action": "ack", "lease_id": str(lease_id)}
 
     max_workers = max(1, len(messages))
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="job-worker") as pool:
         futures = [pool.submit(process_message, message) for message in messages]
         for future in as_completed(futures):
-            lease_id = future.result()
-            if lease_id:
-                acks.append({"lease_id": lease_id})
+            outcome = future.result()
+            if not outcome:
+                continue
+            action = outcome.get("action")
+            lease_id = outcome.get("lease_id")
+            if not lease_id:
+                continue
+            if action == "retry":
+                retries.append(
+                    {
+                        "lease_id": str(lease_id),
+                        "delay_seconds": int(outcome.get("delay_seconds", config.retry_delay_seconds)),
+                    }
+                )
+            else:
+                acks.append({"lease_id": str(lease_id)})
 
     if acks or retries:
         cf_post(
