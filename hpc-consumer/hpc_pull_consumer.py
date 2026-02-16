@@ -10,6 +10,7 @@ This process runs on the compute node and repeatedly:
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import os
 import subprocess
@@ -43,6 +44,7 @@ class Config:
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
     heartbeat_interval_seconds: float = 30.0
+    max_concurrent_jobs: int = 5
     results_dir: str = "results"
     apptainer_image: str = ""
     apptainer_bin: str = "apptainer"
@@ -86,6 +88,7 @@ def load_config() -> Config:
         poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "2")),
         retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "30")),
         heartbeat_interval_seconds=float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30")),
+        max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", os.getenv("BATCH_SIZE", "5"))),
         results_dir=os.getenv("RESULTS_DIR", "results"),
         apptainer_image=os.getenv("APPTAINER_IMAGE", DEFAULT_APPTAINER_IMAGE),
         apptainer_bin=os.getenv("APPTAINER_BIN", "apptainer"),
@@ -382,6 +385,9 @@ def ensure_image_fresh() -> None:
     subprocess.run([str(updater)], cwd=str(ROOT_DIR), check=True)
 
 
+IMAGE_REFRESH_LOCK = threading.Lock()
+
+
 def enqueue_result(
     config: Config,
     job_id: str,
@@ -454,21 +460,26 @@ def process_once(config: Config) -> None:
     retries: list[dict[str, Any]] = []
     results_dir = Path(config.results_dir)
 
-    for message in messages:
+    def process_message(message: dict[str, Any]) -> str | None:
         lease_id = message.get("lease_id")
         if not lease_id:
-            continue
+            return None
 
         job_id = "unknown"
         try:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
             job_input = job.get("input", {})
-            exec_mode = str(job_input.get("exec_mode", "container")).lower() if isinstance(job_input, dict) else "container"
+            exec_mode = (
+                str(job_input.get("exec_mode", "container")).lower()
+                if isinstance(job_input, dict)
+                else "container"
+            )
             if exec_mode == "host":
                 result_pointer, exit_code, meta = run_host_compute(job, results_dir)
             else:
-                ensure_image_fresh()
+                with IMAGE_REFRESH_LOCK:
+                    ensure_image_fresh()
                 result_pointer, exit_code, meta = run_compute(job, results_dir, config)
             enqueue_result(
                 config=config,
@@ -487,8 +498,8 @@ def process_once(config: Config) -> None:
                     "finished_at": meta.get("finished_at"),
                 },
             )
-            acks.append({"lease_id": lease_id})
             print(f"completed job {job_id} -> {result_pointer}")
+            return str(lease_id)
         except Exception as exc:
             err = str(exc)
             print(f"failed to process message job_id={job_id}: {err}")
@@ -509,7 +520,15 @@ def process_once(config: Config) -> None:
                 )
             except Exception as enqueue_exc:
                 print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
-            acks.append({"lease_id": lease_id})
+            return str(lease_id)
+
+    max_workers = max(1, min(config.max_concurrent_jobs, len(messages)))
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="job-worker") as pool:
+        futures = [pool.submit(process_message, message) for message in messages]
+        for future in as_completed(futures):
+            lease_id = future.result()
+            if lease_id:
+                acks.append({"lease_id": lease_id})
 
     if acks or retries:
         cf_post(
