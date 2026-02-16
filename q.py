@@ -223,8 +223,13 @@ def cmd_submit(raw_parts: list[str], wait: bool) -> None:
         if not job_id:
             raise RuntimeError("submit succeeded but missing job_id")
         if not wait:
+            json_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
+            stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+            stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
             print(f"job queued: {job_id}")
-            print("result will be written to local-results/<job_id>.json when completed")
+            print(f"result_json: {json_path}")
+            print(f"result_stdout: {stdout_path}")
+            print(f"result_stderr: {stderr_path}")
             return
         wait_for_local_result_file(job_id=job_id)
     except error.HTTPError as exc:
