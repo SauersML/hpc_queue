@@ -449,6 +449,7 @@ def process_once(config: Config) -> None:
         if not lease_id:
             continue
 
+        job_id = "unknown"
         try:
             job = decode_message_body(message.get("body"))
             job_id = str(job.get("job_id", "unknown"))
@@ -477,13 +478,26 @@ def process_once(config: Config) -> None:
             acks.append({"lease_id": lease_id})
             print(f"completed job {job_id} -> {result_pointer}")
         except Exception as exc:
-            print(f"failed to process message: {exc}")
-            retries.append(
-                {
-                    "lease_id": lease_id,
-                    "delay_seconds": config.retry_delay_seconds,
-                }
-            )
+            err = str(exc)
+            print(f"failed to process message job_id={job_id}: {err}")
+            now = datetime.now(timezone.utc).isoformat()
+            try:
+                enqueue_result(
+                    config=config,
+                    job_id=job_id,
+                    status="failed",
+                    result_pointer="",
+                    extra={
+                        "event_type": "failed",
+                        "exit_code": 1,
+                        "stderr_tail": err[-8000:],
+                        "started_at": now,
+                        "finished_at": now,
+                    },
+                )
+            except Exception as enqueue_exc:
+                print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
+            acks.append({"lease_id": lease_id})
 
     if acks or retries:
         cf_post(
