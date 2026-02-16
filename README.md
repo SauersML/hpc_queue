@@ -84,6 +84,14 @@ q logs <job_id>
 
 `q logs` reads local files when available, and otherwise falls back to cached queue result tails.
 
+View one job's last known status (no queue polling):
+
+```bash
+q job <job_id>
+```
+
+`q job` reads only local artifacts/cache (`local-results` + `results_cache.jsonl`).
+
 ## CLI Reference
 
 `q login`
@@ -106,6 +114,10 @@ q logs <job_id>
 
 `q logs <job_id>`
 - Prints job summary plus stdout/stderr from local artifacts or cache.
+
+`q job <job_id>`
+- Prints last known event/status for one job from local artifacts/cache only.
+- Does not call Cloudflare queue APIs.
 
 `q results`
 - Pull one batch from results queue and write local artifacts.

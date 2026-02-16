@@ -463,7 +463,11 @@ def cmd_logs(job_id: str) -> None:
                 json.dumps(
                     {
                         "job_id": record.get("job_id"),
+                        "event_type": record.get("event_type"),
                         "status": record.get("status"),
+                        "exec_mode": record.get("exec_mode"),
+                        "command": record.get("command"),
+                        "workdir": record.get("workdir"),
                         "exit_code": record.get("exit_code"),
                         "started_at": record.get("started_at"),
                         "finished_at": record.get("finished_at"),
@@ -503,7 +507,11 @@ def cmd_logs(job_id: str) -> None:
                     json.dumps(
                         {
                             "job_id": last_match.get("job_id"),
+                            "event_type": last_match.get("event_type"),
                             "status": last_match.get("status"),
+                            "exec_mode": last_match.get("exec_mode"),
+                            "command": last_match.get("command"),
+                            "workdir": last_match.get("workdir"),
                             "exit_code": last_match.get("exit_code"),
                             "started_at": last_match.get("started_at"),
                             "finished_at": last_match.get("finished_at"),
@@ -553,6 +561,66 @@ def cmd_logs(job_id: str) -> None:
     else:
         print("\n=== stderr ===")
         print("(missing)")
+
+
+def cmd_job(job_id: str) -> None:
+    local_result_json = LOCAL_RESULTS_DIR / f"{job_id}.json"
+    if local_result_json.exists():
+        record = json.loads(local_result_json.read_text(encoding="utf-8"))
+        print(
+            json.dumps(
+                {
+                    "job_id": record.get("job_id"),
+                    "event_type": record.get("event_type"),
+                    "status": record.get("status"),
+                    "exec_mode": record.get("exec_mode"),
+                    "command": record.get("command"),
+                    "workdir": record.get("workdir"),
+                    "exit_code": record.get("exit_code"),
+                    "started_at": record.get("started_at"),
+                    "finished_at": record.get("finished_at"),
+                    "result_pointer": record.get("result_pointer"),
+                    "source": "local-results",
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if RESULTS_CACHE_PATH.exists():
+        last_match: dict[str, Any] | None = None
+        for line in RESULTS_CACHE_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(event, dict) and str(event.get("job_id")) == job_id:
+                last_match = event
+        if last_match is not None:
+            print(
+                json.dumps(
+                    {
+                        "job_id": last_match.get("job_id"),
+                        "event_type": last_match.get("event_type"),
+                        "status": last_match.get("status"),
+                        "exec_mode": last_match.get("exec_mode"),
+                        "command": last_match.get("command"),
+                        "workdir": last_match.get("workdir"),
+                        "exit_code": last_match.get("exit_code"),
+                        "started_at": last_match.get("started_at"),
+                        "finished_at": last_match.get("finished_at"),
+                        "result_pointer": last_match.get("result_pointer"),
+                        "source": "results_cache",
+                    },
+                    indent=2,
+                )
+            )
+            return
+
+    print(json.dumps({"job_id": job_id, "status": "pending_or_unknown", "source": "local-cache"}, indent=2))
 
 
 def cmd_status(output_json: bool = False) -> None:
@@ -721,6 +789,8 @@ def build_parser() -> argparse.ArgumentParser:
     clear_cmd.add_argument("--max-batches", type=int, default=200, help="maximum pull/ack cycles")
     logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
     logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
+    job = sub.add_parser("job", help="show last known status for one job from local cache")
+    job.add_argument("job_id", help="job id to inspect")
     status_cmd = sub.add_parser("status", help="show worker status")
     status_cmd.add_argument("--json", action="store_true", help="output raw JSON status")
     stop_cmd = sub.add_parser("stop", help="stop worker process")
@@ -746,7 +816,7 @@ def normalize_wait_flag(argv: list[str]) -> list[str]:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "status", "stop"}
+    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "job", "status", "stop"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
@@ -773,6 +843,8 @@ def main() -> None:
         cmd_clear(args.target, args.batch_size, args.max_batches)
     elif args.command == "logs":
         cmd_logs(args.job_id)
+    elif args.command == "job":
+        cmd_job(args.job_id)
     elif args.command == "status":
         cmd_status(args.json)
     elif args.command == "stop":

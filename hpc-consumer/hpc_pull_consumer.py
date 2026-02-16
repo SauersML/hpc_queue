@@ -226,6 +226,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     job_input = job.get("input", {})
     if not isinstance(job_input, dict):
         job_input = {}
+    command = str(job_input.get("command", ""))
     input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
     staged_files = stage_local_files(job_input, job_dir)
     try:
@@ -261,6 +262,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     meta = {
         "job_id": job_id,
         "exec_mode": "container",
+        "command": command,
+        "workdir": "/",
         "status": "completed" if proc.returncode == 0 else "failed",
         "started_at": started,
         "finished_at": finished,
@@ -275,11 +278,6 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "output_path": str(output_path.resolve()),
     }
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"apptainer command failed for {job_id} rc={proc.returncode}: {meta['stderr_tail'][-500:]}"
-        )
 
     if not output_path.exists():
         output_path.write_text(
@@ -339,6 +337,7 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
         "job_id": job_id,
         "exec_mode": "host",
         "command": command,
+        "workdir": str(results_dir.resolve()),
         "status": "completed" if proc.returncode == 0 else "failed",
         "started_at": started,
         "finished_at": finished,
@@ -468,6 +467,8 @@ def process_once(config: Config) -> None:
                 extra={
                     "event_type": "completed",
                     "exec_mode": exec_mode,
+                    "command": meta.get("command", ""),
+                    "workdir": meta.get("workdir", ""),
                     "exit_code": exit_code,
                     "stdout_tail": meta.get("stdout_tail", ""),
                     "stderr_tail": meta.get("stderr_tail", ""),
