@@ -13,10 +13,6 @@ Single CLI: `q.py`
 
 ## Setup
 
-```bash
-cp /Users/user/hpc_queue/.env.example /Users/user/hpc_queue/.env
-```
-
 Run one command to configure:
 
 ```bash
