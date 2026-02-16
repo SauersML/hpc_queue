@@ -50,9 +50,8 @@ RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-to
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 
-RUN mkdir -p /opt/src \
-    && git clone --depth 1 --branch "${GNOMON_REF}" https://github.com/SauersML/gnomon.git /opt/src/gnomon \
-    && git clone --depth 1 --branch "${REAGLE_REF}" https://github.com/SauersML/reagle.git /opt/src/reagle
+RUN git clone --depth 1 --branch "${GNOMON_REF}" https://github.com/SauersML/gnomon.git /gnomon \
+    && git clone --depth 1 --branch "${REAGLE_REF}" https://github.com/SauersML/reagle.git /reagle
 
 RUN set -eux; \
     command -v bcftools; \

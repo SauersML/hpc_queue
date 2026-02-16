@@ -245,7 +245,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         f"{job_dir}:/work",
     ]
     for repo in synced_repos:
-        cmd.extend(["--bind", f"{repo['path']}:/opt/src/{repo['name']}"])
+        cmd.extend(["--bind", f"{repo['path']}:/{repo['name']}"])
     if config.apptainer_bind:
         cmd.extend(["--bind", config.apptainer_bind])
     cmd.extend([config.apptainer_image, "/bin/bash", "-lc", config.container_cmd])

@@ -187,14 +187,14 @@ The default runtime image now includes:
 - `bcftools`
 - `plink2` and `gctb` (via micromamba/bioconda)
 - Cloned repos:
-  - `/opt/src/gnomon`
-  - `/opt/src/reagle`
+  - `/gnomon`
+  - `/reagle`
 
 ## Repo freshness (`gnomon` / `reagle`)
 
 For container jobs, the HPC consumer now syncs these repos before each job and bind-mounts them:
-- `/opt/src/gnomon`
-- `/opt/src/reagle`
+- `/gnomon`
+- `/reagle`
 
 This means jobs see latest refs (default `main`) without waiting for a container rebuild.
 
