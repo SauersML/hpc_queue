@@ -51,7 +51,7 @@ q logs <job_id>
 
 ## HPC node
 
-Start worker + auto image refresh + cron watchdog in one command:
+Start worker + auto image refresh in one command:
 
 ```bash
 q start

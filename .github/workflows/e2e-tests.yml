@@ -48,9 +48,6 @@ jobs:
           bash -n hpc-consumer/service_control.sh
           bash -n hpc-consumer/scripts/update_apptainer_image.sh
           bash -n hpc-consumer/start_consumer.sh
-          bash -n hpc-consumer/cron_watchdog.sh
-          bash -n hpc-consumer/install_cron_watchdog.sh
-          bash -n hpc-consumer/remove_cron_watchdog.sh
           bash -n tests/e2e/cloudflare_e2e.sh
           bash -n tests/e2e/full_e2e_existing_worker.sh
 

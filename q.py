@@ -15,7 +15,6 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
 PID_FILE = ROOT / "hpc-consumer" / "hpc_pull_consumer.pid"
-CRON_TAG = "HPC_QUEUE_WATCHDOG"
 DEFAULT_APPTAINER_IMAGE = str(ROOT / "runtime" / "hpc-queue-runtime.sif")
 OLD_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime:latest"
 DEFAULT_APPTAINER_OCI_REF = "ghcr.io/sauersml/hpc-queue-runtime-open:latest"
@@ -168,17 +167,7 @@ def cmd_worker() -> None:
     maybe_refresh_image()
 
     run([str(ROOT / "hpc-consumer" / "start_consumer.sh")], cwd=ROOT)
-    cron_installed = True
-    try:
-        run([str(ROOT / "hpc-consumer" / "install_cron_watchdog.sh")], cwd=ROOT)
-    except subprocess.CalledProcessError:
-        cron_installed = False
-        print("warning: failed to install cron watchdog; worker is still running")
-
-    if cron_installed:
-        print("worker started and cron watchdog installed")
-    else:
-        print("worker started (without cron watchdog)")
+    print("worker started")
     print(f"log file: {ROOT / 'hpc-consumer' / 'hpc_pull_consumer.log'}")
 
 
@@ -235,10 +224,7 @@ def cmd_status() -> None:
             proc = subprocess.run(["kill", "-0", pid], capture_output=True)
             running = proc.returncode == 0
 
-    cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-    cron_enabled = CRON_TAG in (cron.stdout or "")
-
-    print(json.dumps({"running": running, "pid": pid or None, "cron_watchdog": cron_enabled}))
+    print(json.dumps({"running": running, "pid": pid or None}))
 
 
 def cmd_stop() -> None:
@@ -263,12 +249,12 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
-    sub.add_parser("start", help="start compute worker and install cron watchdog")
+    sub.add_parser("start", help="start compute worker")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
     logs = sub.add_parser("logs", help="show stdout/stderr for a completed job")
     logs.add_argument("job_id", help="job id to inspect from local hpc-consumer/results")
-    sub.add_parser("status", help="show worker/cron status")
+    sub.add_parser("status", help="show worker status")
     sub.add_parser("stop", help="stop worker process")
 
     return parser
