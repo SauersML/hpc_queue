@@ -42,6 +42,20 @@ q host "nproc"
 q host "top -n 1"
 ```
 
+Run a local file on HPC (file is uploaded into the job payload):
+
+```bash
+q run-file ./script.py
+q run-file ./script.py -- --arg1 10 --arg2 test
+```
+
+By default `q run-file` executes with `python`.
+Set a different runner with `--runner`, for example:
+
+```bash
+q run-file --runner bash ./job.sh -- --fast
+```
+
 `q submit` now returns immediately by default.
 It starts a background local results watcher and writes:
 - `local-results/<job_id>.json`

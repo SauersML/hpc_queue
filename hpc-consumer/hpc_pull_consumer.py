@@ -119,6 +119,43 @@ def decode_message_body(body: Any) -> dict[str, Any]:
     raise ValueError(f"Unsupported body type: {type(body)}")
 
 
+def stage_local_files(job_input: dict[str, Any], job_dir: Path) -> list[str]:
+    local_files = job_input.get("local_files", [])
+    if not isinstance(local_files, list):
+        return []
+
+    staged: list[str] = []
+    for item in local_files:
+        if not isinstance(item, dict):
+            continue
+        rel = str(item.get("path", "")).strip()
+        data_b64 = str(item.get("content_b64", "")).strip()
+        if not rel or not data_b64:
+            continue
+
+        rel_path = Path(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            raise ValueError(f"invalid local_files path: {rel}")
+
+        try:
+            data = base64.b64decode(data_b64)
+        except Exception as exc:
+            raise ValueError(f"invalid base64 for staged file path={rel}") from exc
+
+        target = job_dir / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+        mode_raw = str(item.get("mode", "644")).strip()
+        try:
+            mode = int(mode_raw, 8)
+        except Exception:
+            mode = 0o644
+        os.chmod(target, mode)
+        staged.append(str(target.resolve()))
+    return staged
+
+
 def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple[str, int, dict[str, Any]]:
     """Run compute directly on node using Apptainer."""
     job_id = str(job.get("job_id", "unknown"))
@@ -131,10 +168,11 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     stdout_path = job_dir / "stdout.log"
     stderr_path = job_dir / "stderr.log"
 
-    input_path.write_text(
-        json.dumps({"job_id": job_id, "input": job.get("input", {})}),
-        encoding="utf-8",
-    )
+    job_input = job.get("input", {})
+    if not isinstance(job_input, dict):
+        job_input = {}
+    input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
+    staged_files = stage_local_files(job_input, job_dir)
 
     cmd = [
         config.apptainer_bin,
@@ -161,10 +199,12 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
 
     meta = {
         "job_id": job_id,
+        "exec_mode": "container",
         "status": "completed" if proc.returncode == 0 else "failed",
         "started_at": started,
         "finished_at": finished,
         "returncode": proc.returncode,
+        "staged_files": staged_files,
         "stdout_tail": tail_text(stdout_path),
         "stderr_tail": tail_text(stderr_path),
         "stdout_path": str(stdout_path.resolve()),
@@ -209,10 +249,10 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
     stderr_path = job_dir / "stderr.log"
 
     job_input = job.get("input", {})
-    input_path.write_text(
-        json.dumps({"job_id": job_id, "input": job_input}),
-        encoding="utf-8",
-    )
+    if not isinstance(job_input, dict):
+        job_input = {}
+    input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
+    staged_files = stage_local_files(job_input, job_dir)
     command = str(job_input.get("command", "echo no command provided"))
 
     started = datetime.now(timezone.utc).isoformat()
@@ -241,6 +281,7 @@ def run_host_compute(job: dict[str, Any], results_dir: Path) -> tuple[str, int, 
         "started_at": started,
         "finished_at": finished,
         "returncode": proc.returncode,
+        "staged_files": staged_files,
         "stdout_tail": tail_text(stdout_path),
         "stderr_tail": tail_text(stderr_path),
         "stdout_path": str(stdout_path.resolve()),

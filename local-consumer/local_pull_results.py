@@ -131,14 +131,12 @@ def process_once(config: Config) -> None:
                 record = dict(body)
                 stdout_tail = str(record.pop("stdout_tail", ""))
                 stderr_tail = str(record.pop("stderr_tail", ""))
-                if stdout_tail:
-                    stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
-                    stdout_path.write_text(stdout_tail, encoding="utf-8")
-                    record["stdout_tail_file"] = str(stdout_path)
-                if stderr_tail:
-                    stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
-                    stderr_path.write_text(stderr_tail, encoding="utf-8")
-                    record["stderr_tail_file"] = str(stderr_path)
+                stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+                stdout_path.write_text(stdout_tail, encoding="utf-8")
+                record["stdout_tail_file"] = str(stdout_path)
+                stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+                stderr_path.write_text(stderr_tail, encoding="utf-8")
+                record["stderr_tail_file"] = str(stderr_path)
                 (LOCAL_RESULTS_DIR / f"{job_id}.json").write_text(
                     json.dumps(record, indent=2),
                     encoding="utf-8",

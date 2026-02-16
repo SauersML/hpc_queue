@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import json
 import os
 import secrets
+import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -22,6 +25,7 @@ LOCAL_WATCHER_PID_FILE = ROOT / "local-consumer" / "local_results_watcher.pid"
 LOCAL_WATCHER_LOG_FILE = ROOT / "local-consumer" / "local_results_watcher.log"
 
 DEFAULT_WORKER_URL = "https://hpc-queue-producer.sauer354.workers.dev"
+DEFAULT_INLINE_FILE_MAX_BYTES = 64 * 1024
 
 
 def load_dotenv(path: Path) -> None:
@@ -126,6 +130,52 @@ def build_submit_input(raw_parts: list[str], exec_mode: str) -> dict[str, Any]:
     return {"command": raw, "exec_mode": exec_mode}
 
 
+def build_run_file_input(
+    file_path: str,
+    file_args: list[str],
+    exec_mode: str,
+    runner: str,
+) -> dict[str, Any]:
+    source = Path(file_path).expanduser().resolve()
+    if not source.exists() or not source.is_file():
+        raise RuntimeError(f"run-file source does not exist or is not a file: {source}")
+
+    max_bytes = int(os.getenv("INLINE_FILE_MAX_BYTES", str(DEFAULT_INLINE_FILE_MAX_BYTES)))
+    raw = source.read_bytes()
+    if len(raw) > max_bytes:
+        raise RuntimeError(
+            f"run-file too large ({len(raw)} bytes). max allowed is {max_bytes} bytes."
+        )
+
+    mode_bits = stat.S_IMODE(source.stat().st_mode)
+    mode = "755" if mode_bits & stat.S_IXUSR else "644"
+    remote_rel = f"files/{source.name}"
+    remote_abs = f"/work/{remote_rel}"
+
+    normalized_args = list(file_args)
+    if normalized_args and normalized_args[0] == "--":
+        normalized_args = normalized_args[1:]
+
+    cmd_parts: list[str] = []
+    if runner:
+        cmd_parts.append(shlex.quote(runner))
+    cmd_parts.append(shlex.quote(remote_abs))
+    cmd_parts.extend(shlex.quote(arg) for arg in normalized_args)
+    command = " ".join(cmd_parts)
+
+    return {
+        "command": command,
+        "exec_mode": exec_mode,
+        "local_files": [
+            {
+                "path": remote_rel,
+                "content_b64": base64.b64encode(raw).decode("ascii"),
+                "mode": mode,
+            }
+        ],
+    }
+
+
 def cache_result_event(event: dict[str, Any]) -> None:
     RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RESULTS_CACHE_PATH.open("a", encoding="utf-8") as cache_fp:
@@ -141,14 +191,12 @@ def write_local_result_file(event: dict[str, Any]) -> Path | None:
     record = dict(event)
     stdout_tail = str(record.pop("stdout_tail", ""))
     stderr_tail = str(record.pop("stderr_tail", ""))
-    if stdout_tail:
-        stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
-        stdout_path.write_text(stdout_tail, encoding="utf-8")
-        record["stdout_tail_file"] = str(stdout_path)
-    if stderr_tail:
-        stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
-        stderr_path.write_text(stderr_tail, encoding="utf-8")
-        record["stderr_tail_file"] = str(stderr_path)
+    stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+    stdout_path.write_text(stdout_tail, encoding="utf-8")
+    record["stdout_tail_file"] = str(stdout_path)
+    stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+    stderr_path.write_text(stderr_tail, encoding="utf-8")
+    record["stderr_tail_file"] = str(stderr_path)
     out_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
     out_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return out_path
@@ -208,12 +256,11 @@ def ensure_local_watcher_running() -> None:
         )
 
 
-def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
+def submit_payload(payload: dict[str, Any], wait: bool) -> None:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
     ensure_local_watcher_running()
     worker_url = os.getenv("WORKER_URL", DEFAULT_WORKER_URL).rstrip("/")
-    payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
 
     req = request.Request(
         url=f"{worker_url}/jobs",
@@ -255,6 +302,23 @@ def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
+
+
+def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
+    payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
+    submit_payload(payload=payload, wait=wait)
+
+
+def cmd_run_file(file_path: str, file_args: list[str], wait: bool, runner: str) -> None:
+    payload = {
+        "input": build_run_file_input(
+            file_path=file_path,
+            file_args=file_args,
+            exec_mode="container",
+            runner=runner,
+        )
+    }
+    submit_payload(payload=payload, wait=wait)
 
 
 def maybe_refresh_image() -> None:
@@ -452,6 +516,23 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         help="shell command to run on host (outside the container)",
     )
+    run_file = sub.add_parser("run-file", help="upload a local file and execute it inside container")
+    run_file.add_argument(
+        "--wait",
+        action="store_true",
+        help="wait until local result file exists (default submits and returns immediately)",
+    )
+    run_file.add_argument(
+        "--runner",
+        default="python",
+        help='runner binary (default: "python"); use empty string to execute file directly',
+    )
+    run_file.add_argument("file_path", help="local file path to stage into the job")
+    run_file.add_argument(
+        "file_args",
+        nargs=argparse.REMAINDER,
+        help="arguments passed to the staged file",
+    )
 
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
@@ -470,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "host", "login", "start", "worker", "results", "logs", "status", "stop"}
+    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "logs", "status", "stop"}
     argv = sys.argv[1:]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
@@ -481,6 +562,8 @@ def main() -> None:
         cmd_submit(args.payload, args.wait, exec_mode="container")
     elif args.command == "host":
         cmd_submit(args.payload, args.wait, exec_mode="host")
+    elif args.command == "run-file":
+        cmd_run_file(args.file_path, args.file_args, args.wait, args.runner)
     elif args.command == "login":
         cmd_login(
             queue_token=args.queue_token,
