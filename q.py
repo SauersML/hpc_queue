@@ -122,6 +122,14 @@ def cmd_submit(raw_parts: list[str]) -> None:
         headers={
             "content-type": "application/json",
             "x-api-key": api_key,
+            # Workers.dev may block default urllib signature on some networks.
+            "user-agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "accept": "application/json",
+            "accept-language": "en-US,en;q=0.9",
         },
     )
 
