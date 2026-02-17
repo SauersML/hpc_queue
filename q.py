@@ -762,10 +762,41 @@ def cmd_stop(stop_all: bool) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="hpc_queue control CLI")
+    parser = argparse.ArgumentParser(
+        description="hpc_queue control CLI",
+        epilog=(
+            "Quickstart:\n"
+            "  q login\n"
+            "  q submit ls\n"
+            "  q submit --wait \"python -V\"\n"
+            "  q host --wait \"hostname\"\n"
+            "  q logs <job_id>\n"
+            "  q status\n"
+            "\n"
+            "Container mounts:\n"
+            "  /work    per-job scratch/results directory\n"
+            "  /gnomon  synced gnomon repo on HPC\n"
+            "  /reagle  synced reagle repo on HPC\n"
+            "  /portal  read-only view of HPC host filesystem (/)\n"
+            "\n"
+            "Examples:\n"
+            "  q submit --wait \"ls -lah /portal/users\"\n"
+            "  q submit --wait \"ls -lah /portal/projects\"\n"
+            "  q run-file --wait ./script.py -- --arg 1\n"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    submit = sub.add_parser("submit", help="submit a shell command job (inside Apptainer)")
+    submit = sub.add_parser(
+        "submit",
+        help="submit a shell command job (inside Apptainer)",
+        description=(
+            "Run command inside the container runtime on HPC.\n"
+            "Inside container you can access /work, /gnomon, /reagle, and /portal (host filesystem, read-only)."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     submit.add_argument(
         "--wait",
         action="store_true",
@@ -774,9 +805,13 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument(
         "payload",
         nargs=argparse.REMAINDER,
-        help="shell command to run inside the container",
+        help="shell command to run inside container; use /portal/<host_path> for host files",
     )
-    host = sub.add_parser("host", help="submit a shell command job to run directly on HPC host")
+    host = sub.add_parser(
+        "host",
+        help="submit a shell command job to run directly on HPC host",
+        description="Run command directly on HPC host (outside container).",
+    )
     host.add_argument(
         "--wait",
         action="store_true",
@@ -787,7 +822,15 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=argparse.REMAINDER,
         help="shell command to run on host (outside the container)",
     )
-    run_file = sub.add_parser("run-file", help="upload a local file and execute it inside container")
+    run_file = sub.add_parser(
+        "run-file",
+        help="upload a local file and execute it inside container",
+        description=(
+            "Upload a local file into /work/files/<name> and execute it in container.\n"
+            "Container can also read host files via /portal/<host_path>."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     run_file.add_argument(
         "--wait",
         action="store_true",

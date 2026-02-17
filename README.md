@@ -35,6 +35,16 @@ q submit "python /work/script.py --iters 100"
 q python3 /work/thisfile.py
 ```
 
+Container jobs can read HPC host files through a built-in read-only portal:
+
+```bash
+q submit --wait "ls -lah /portal/users"
+q submit --wait "ls -lah /portal/projects"
+q submit --wait "cat /portal/etc/os-release"
+```
+
+Use `/portal/<absolute-host-path>` to reference host files from inside the container.
+
 Submit a host command job (outside Apptainer on HPC node):
 
 ```bash
@@ -94,12 +104,26 @@ q job <job_id>
 
 ## CLI Reference
 
+You can print full command help any time:
+
+```bash
+q --help
+q submit --help
+q host --help
+q run-file --help
+```
+
 `q login`
 - `--queue-token <token>`: set Cloudflare queue API token.
 - `--api-key <key>`: set `/jobs` API key (auto-generated if omitted).
 
 `q submit <command...>`
 - Runs command inside Apptainer runtime on HPC.
+- Container mount points:
+  - `/work` (job scratch and artifacts)
+  - `/gnomon` (synced gnomon repo)
+  - `/reagle` (synced reagle repo)
+  - `/portal` (read-only host filesystem view)
 - `--wait`: block until local result file exists, then print logs.
 
 `q host <command...>`

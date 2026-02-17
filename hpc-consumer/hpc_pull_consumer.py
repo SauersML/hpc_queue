@@ -36,6 +36,7 @@ DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
 DEFAULT_APPTAINER_BIN = "apptainer"
 DEFAULT_APPTAINER_BIND = ""
 DEFAULT_CONTAINER_CMD = "python /app/run.py"
+DEFAULT_HOST_PORTAL_BIND = "/:/portal:ro"
 DEFAULT_EXTERNAL_REPOS_ROOT = str(ROOT_DIR / "runtime" / "external-src")
 DEFAULT_GNOMON_REPO_URL = "https://github.com/SauersML/gnomon.git"
 DEFAULT_REAGLE_REPO_URL = "https://github.com/SauersML/reagle.git"
@@ -271,6 +272,8 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "exec",
         "--bind",
         f"{job_dir}:/work",
+        "--bind",
+        DEFAULT_HOST_PORTAL_BIND,
     ]
     for repo in synced_repos:
         cmd.extend(["--bind", f"{repo['path']}:/{repo['name']}"])
