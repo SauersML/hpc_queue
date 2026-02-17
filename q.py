@@ -135,7 +135,6 @@ def cmd_login(
     api_key: str | None,
     r2_access_key_id: str | None,
     r2_secret_access_key: str | None,
-    r2_bucket: str | None,
 ) -> None:
     existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
     existing_api_key = os.getenv("API_KEY", "")
@@ -160,8 +159,6 @@ def cmd_login(
         updates["R2_ACCESS_KEY_ID"] = r2_access_key_id
     if r2_secret_access_key:
         updates["R2_SECRET_ACCESS_KEY"] = r2_secret_access_key
-    if r2_bucket:
-        updates["R2_BUCKET"] = r2_bucket
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
 
@@ -909,7 +906,7 @@ def _best_output_path(default_name: str, output: str | None) -> Path:
 def cmd_grab(target: str, source_path: str, output: str | None) -> None:
     require_env("CF_QUEUES_API_TOKEN")
     require_env("API_KEY")
-    bucket = os.getenv("R2_BUCKET", DEFAULT_R2_BUCKET).strip() or DEFAULT_R2_BUCKET
+    bucket = DEFAULT_R2_BUCKET
     src = source_path.strip()
     if not src:
         raise RuntimeError("grab requires a non-empty source path")
@@ -1063,7 +1060,6 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
     login.add_argument("--r2-access-key-id", help="R2 S3 access key id for private grab transfers")
     login.add_argument("--r2-secret-access-key", help="R2 S3 secret key for private grab transfers")
-    login.add_argument("--r2-bucket", help=f'R2 bucket for private grab transfers (default: "{DEFAULT_R2_BUCKET}")')
     sub.add_parser("start", help="start compute worker")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
@@ -1132,7 +1128,6 @@ def main() -> None:
             api_key=args.api_key,
             r2_access_key_id=args.r2_access_key_id,
             r2_secret_access_key=args.r2_secret_access_key,
-            r2_bucket=args.r2_bucket,
         )
     elif args.command in {"start", "worker"}:
         cmd_worker()

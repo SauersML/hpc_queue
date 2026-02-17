@@ -40,7 +40,7 @@ q update
 Configure R2 keys once for private file grab transfers:
 
 ```bash
-q login --r2-access-key-id "<R2_ACCESS_KEY_ID>" --r2-secret-access-key "<R2_SECRET_ACCESS_KEY>" --r2-bucket "hpc-queue-grab"
+q login --r2-access-key-id "<R2_ACCESS_KEY_ID>" --r2-secret-access-key "<R2_SECRET_ACCESS_KEY>"
 ```
 
 ## Local machine
