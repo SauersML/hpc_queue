@@ -10,7 +10,7 @@ This process runs on the compute node and repeatedly:
 from __future__ import annotations
 
 import base64
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -26,6 +26,7 @@ DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_PULL_BATCH_SIZE = 100
+DEFAULT_MAX_PARALLEL_JOBS = 100
 DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_RETRY_DELAY_SECONDS = 30
@@ -49,6 +50,7 @@ class Config:
     jobs_queue_id: str
     results_queue_id: str
     api_token: str
+    max_parallel_jobs: int = 100
     visibility_timeout_ms: int = 120000
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
@@ -92,6 +94,7 @@ def load_config() -> Config:
         jobs_queue_id=DEFAULT_CF_JOBS_QUEUE_ID,
         results_queue_id=DEFAULT_CF_RESULTS_QUEUE_ID,
         api_token=req("CF_QUEUES_API_TOKEN"),
+        max_parallel_jobs=DEFAULT_MAX_PARALLEL_JOBS,
         visibility_timeout_ms=DEFAULT_VISIBILITY_TIMEOUT_MS,
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
@@ -468,16 +471,150 @@ def heartbeat_loop(config: Config) -> None:
         time.sleep(interval)
 
 
-def process_once(config: Config) -> None:
+def process_message(message: dict[str, Any], config: Config, results_dir: Path) -> dict[str, Any] | None:
+    lease_id = message.get("lease_id")
+    if not lease_id:
+        return None
+
+    job_id = "unknown"
+    try:
+        job = decode_message_body_with_content_type(
+            body=message.get("body"),
+            content_type=str(message.get("content_type", "")),
+        )
+        job_id = str(job.get("job_id", "unknown"))
+        job_input = job.get("input", {})
+        exec_mode = (
+            str(job_input.get("exec_mode", "container")).lower()
+            if isinstance(job_input, dict)
+            else "container"
+        )
+        if exec_mode == "host":
+            result_pointer, exit_code, meta = run_host_compute(job, results_dir)
+        else:
+            with IMAGE_REFRESH_LOCK:
+                ensure_image_fresh()
+            result_pointer, exit_code, meta = run_compute(job, results_dir, config)
+        enqueue_result(
+            config=config,
+            job_id=job_id,
+            status="completed" if exit_code == 0 else "failed",
+            result_pointer=result_pointer,
+            extra={
+                "event_type": "completed",
+                "exec_mode": exec_mode,
+                "command": meta.get("command", ""),
+                "workdir": meta.get("workdir", ""),
+                "exit_code": exit_code,
+                "stdout_tail": meta.get("stdout_tail", ""),
+                "stderr_tail": meta.get("stderr_tail", ""),
+                "started_at": meta.get("started_at"),
+                "finished_at": meta.get("finished_at"),
+            },
+        )
+        print(f"completed job {job_id} -> {result_pointer}")
+        return {"action": "ack", "lease_id": str(lease_id)}
+    except Exception as exc:
+        err = str(exc)
+        print(f"failed to process message job_id={job_id}: {err}")
+        attempts_raw = message.get("attempts", 0)
+        try:
+            attempts = int(attempts_raw)
+        except Exception:
+            attempts = 0
+        if attempts < config.max_retry_attempts:
+            print(
+                "scheduling retry "
+                f"job_id={job_id} attempts={attempts}/{config.max_retry_attempts} "
+                f"delay={config.retry_delay_seconds}s"
+            )
+            return {
+                "action": "retry",
+                "lease_id": str(lease_id),
+                "delay_seconds": config.retry_delay_seconds,
+            }
+
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            enqueue_result(
+                config=config,
+                job_id=job_id,
+                status="failed",
+                result_pointer="",
+                extra={
+                    "event_type": "failed",
+                    "exit_code": 1,
+                    "stderr_tail": err[-8000:],
+                    "started_at": now,
+                    "finished_at": now,
+                    "attempts": attempts,
+                },
+            )
+        except Exception as enqueue_exc:
+            print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
+        return {"action": "ack", "lease_id": str(lease_id)}
+
+def ack_retry_outcomes(config: Config, outcomes: list[dict[str, Any]]) -> None:
+    acks: list[dict[str, str]] = []
+    retries: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        if not outcome:
+            continue
+        action = outcome.get("action")
+        lease_id = str(outcome.get("lease_id", "")).strip()
+        if not lease_id:
+            continue
+        if action == "retry":
+            retries.append(
+                {
+                    "lease_id": lease_id,
+                    "delay_seconds": int(outcome.get("delay_seconds", config.retry_delay_seconds)),
+                }
+            )
+        else:
+            acks.append({"lease_id": lease_id})
+    if not acks and not retries:
+        return
+    cf_post(
+        url=f"{config.jobs_api_base}/ack",
+        token=config.api_token,
+        payload={"acks": acks, "retries": retries},
+    )
+
+
+def process_once(
+    config: Config,
+    pool: ThreadPoolExecutor,
+    inflight: dict[Any, bool],
+    results_dir: Path,
+) -> None:
+    done: list[Any] = [future for future in list(inflight.keys()) if future.done()]
+    if done:
+        outcomes: list[dict[str, Any]] = []
+        for future in done:
+            inflight.pop(future, None)
+            try:
+                outcome = future.result()
+                if outcome:
+                    outcomes.append(outcome)
+            except Exception as exc:
+                # Should be rare because process_message handles its own exceptions.
+                print(f"worker future crashed: {exc}")
+        if outcomes:
+            ack_retry_outcomes(config, outcomes)
+
+    available_slots = max(0, config.max_parallel_jobs - len(inflight))
+    if available_slots <= 0:
+        return
+
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
         token=config.api_token,
         payload={
-            "batch_size": DEFAULT_PULL_BATCH_SIZE,
+            "batch_size": min(DEFAULT_PULL_BATCH_SIZE, available_slots),
             "visibility_timeout_ms": config.visibility_timeout_ms,
         },
     )
-
     result = pull_resp.get("result", {})
     if isinstance(result, dict):
         messages = result.get("messages", [])
@@ -488,124 +625,15 @@ def process_once(config: Config) -> None:
     if not messages:
         return
 
-    acks: list[dict[str, str]] = []
-    retries: list[dict[str, Any]] = []
-    results_dir = Path(config.results_dir)
-
-    def process_message(message: dict[str, Any]) -> dict[str, Any] | None:
-        lease_id = message.get("lease_id")
-        if not lease_id:
-            return None
-
-        job_id = "unknown"
-        try:
-            job = decode_message_body_with_content_type(
-                body=message.get("body"),
-                content_type=str(message.get("content_type", "")),
-            )
-            job_id = str(job.get("job_id", "unknown"))
-            job_input = job.get("input", {})
-            exec_mode = (
-                str(job_input.get("exec_mode", "container")).lower()
-                if isinstance(job_input, dict)
-                else "container"
-            )
-            if exec_mode == "host":
-                result_pointer, exit_code, meta = run_host_compute(job, results_dir)
-            else:
-                with IMAGE_REFRESH_LOCK:
-                    ensure_image_fresh()
-                result_pointer, exit_code, meta = run_compute(job, results_dir, config)
-            enqueue_result(
-                config=config,
-                job_id=job_id,
-                status="completed" if exit_code == 0 else "failed",
-                result_pointer=result_pointer,
-                extra={
-                    "event_type": "completed",
-                    "exec_mode": exec_mode,
-                    "command": meta.get("command", ""),
-                    "workdir": meta.get("workdir", ""),
-                    "exit_code": exit_code,
-                    "stdout_tail": meta.get("stdout_tail", ""),
-                    "stderr_tail": meta.get("stderr_tail", ""),
-                    "started_at": meta.get("started_at"),
-                    "finished_at": meta.get("finished_at"),
-                },
-            )
-            print(f"completed job {job_id} -> {result_pointer}")
-            return {"action": "ack", "lease_id": str(lease_id)}
-        except Exception as exc:
-            err = str(exc)
-            print(f"failed to process message job_id={job_id}: {err}")
-            attempts_raw = message.get("attempts", 0)
-            try:
-                attempts = int(attempts_raw)
-            except Exception:
-                attempts = 0
-            if attempts < config.max_retry_attempts:
-                print(
-                    "scheduling retry "
-                    f"job_id={job_id} attempts={attempts}/{config.max_retry_attempts} "
-                    f"delay={config.retry_delay_seconds}s"
-                )
-                return {
-                    "action": "retry",
-                    "lease_id": str(lease_id),
-                    "delay_seconds": config.retry_delay_seconds,
-                }
-
-            now = datetime.now(timezone.utc).isoformat()
-            try:
-                enqueue_result(
-                    config=config,
-                    job_id=job_id,
-                    status="failed",
-                    result_pointer="",
-                    extra={
-                        "event_type": "failed",
-                        "exit_code": 1,
-                        "stderr_tail": err[-8000:],
-                        "started_at": now,
-                        "finished_at": now,
-                        "attempts": attempts,
-                    },
-                )
-            except Exception as enqueue_exc:
-                print(f"failed to enqueue failure event for job_id={job_id}: {enqueue_exc}")
-            return {"action": "ack", "lease_id": str(lease_id)}
-
-    max_workers = max(1, len(messages))
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="job-worker") as pool:
-        futures = [pool.submit(process_message, message) for message in messages]
-        for future in as_completed(futures):
-            outcome = future.result()
-            if not outcome:
-                continue
-            action = outcome.get("action")
-            lease_id = outcome.get("lease_id")
-            if not lease_id:
-                continue
-            if action == "retry":
-                retries.append(
-                    {
-                        "lease_id": str(lease_id),
-                        "delay_seconds": int(outcome.get("delay_seconds", config.retry_delay_seconds)),
-                    }
-                )
-            else:
-                acks.append({"lease_id": str(lease_id)})
-
-    if acks or retries:
-        cf_post(
-            url=f"{config.jobs_api_base}/ack",
-            token=config.api_token,
-            payload={"acks": acks, "retries": retries},
-        )
+    for message in messages:
+        future = pool.submit(process_message, message, config, results_dir)
+        inflight[future] = True
 
 
 def main() -> None:
     config = load_config()
+    results_dir = Path(config.results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
     print("starting hpc pull consumer")
     print(
         json.dumps(
@@ -613,6 +641,7 @@ def main() -> None:
                 "jobs_queue_id": config.jobs_queue_id,
                 "results_queue_id": config.results_queue_id,
                 "batch_size": DEFAULT_PULL_BATCH_SIZE,
+                "max_parallel_jobs": config.max_parallel_jobs,
                 "visibility_timeout_ms": config.visibility_timeout_ms,
                 "poll_interval_seconds": config.poll_interval_seconds,
             }
@@ -627,12 +656,14 @@ def main() -> None:
     )
     heartbeat_thread.start()
 
-    while True:
-        try:
-            process_once(config)
-        except Exception as exc:
-            print(f"poll loop error: {exc}")
-        time.sleep(config.poll_interval_seconds)
+    inflight: dict[Any, bool] = {}
+    with ThreadPoolExecutor(max_workers=config.max_parallel_jobs, thread_name_prefix="job-worker") as pool:
+        while True:
+            try:
+                process_once(config, pool, inflight, results_dir)
+            except Exception as exc:
+                print(f"poll loop error: {exc}")
+            time.sleep(config.poll_interval_seconds)
 
 
 if __name__ == "__main__":
