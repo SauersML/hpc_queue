@@ -919,15 +919,16 @@ def cmd_grab(target: str, source_path: str, output: str | None) -> None:
 
     out_path = _best_output_path(default_name=basename, output=output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    req = request.Request(get_url, method="GET")
-    with request.urlopen(req, timeout=120) as resp:
-        data = resp.read()
-    out_path.write_bytes(data)
+    subprocess.run(
+        ["curl", "-fsS", "-L", get_url, "-o", str(out_path)],
+        check=True,
+    )
+    data = out_path.read_bytes()
     print(f"saved: {out_path.resolve()}")
     print(f"bytes: {len(data)}")
 
     try:
-        request.urlopen(request.Request(delete_url, method="DELETE"), timeout=30).read()
+        subprocess.run(["curl", "-fsS", "-X", "DELETE", delete_url], check=True, capture_output=True)
         print("remote_cleanup: deleted from private bucket")
     except Exception as exc:
         print(f"warning: remote_cleanup_failed: {exc}")
