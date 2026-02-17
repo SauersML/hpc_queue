@@ -155,7 +155,8 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
 def build_submit_input(raw_parts: list[str], exec_mode: str) -> dict[str, Any]:
     if not raw_parts:
         raise RuntimeError("submit requires a command")
-    raw = " ".join(raw_parts).strip()
+    # Preserve original argv argument boundaries (critical for forms like: bash -lc '...').
+    raw = shlex.join(raw_parts).strip()
     return {"command": raw, "exec_mode": exec_mode}
 
 
