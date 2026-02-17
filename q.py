@@ -35,6 +35,7 @@ DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_RESULTS_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_HPC_HEARTBEAT_MAX_AGE_SECONDS = 90.0
+REPO_URL = "https://github.com/SauersML/hpc_queue.git"
 
 
 def load_dotenv(path: Path) -> None:
@@ -761,6 +762,48 @@ def cmd_stop(stop_all: bool) -> None:
     print("stop signal sent")
 
 
+def get_latest_main_commit() -> str:
+    proc = subprocess.run(
+        ["git", "ls-remote", REPO_URL, "refs/heads/main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    line = (proc.stdout or "").strip().splitlines()
+    if not line:
+        raise RuntimeError("unable to resolve latest main commit")
+    sha = line[0].split()[0].strip()
+    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha.lower()):
+        raise RuntimeError(f"invalid commit hash resolved: {sha}")
+    return sha
+
+
+def cmd_update(wait: bool) -> None:
+    latest = get_latest_main_commit()
+    install_url = f"https://raw.githubusercontent.com/SauersML/hpc_queue/{latest}/install.sh"
+    print(f"latest_main_commit: {latest}")
+    print("updating local install...")
+    run(["bash", "-lc", f"curl -fsSL {install_url} | bash"], cwd=ROOT)
+
+    print("scheduling hpc update + graceful reload...")
+    remote_script = (
+        "set -euo pipefail; "
+        f"curl -fsSL {install_url} | bash; "
+        "mkdir -p \"$HOME/.local/share/hpc_queue/hpc-consumer\"; "
+        "touch \"$HOME/.local/share/hpc_queue/hpc-consumer/reload_requested\"; "
+        "echo hpc_update_requested"
+    )
+    payload = {
+        "input": {
+            "command": shlex.join(["bash", "-lc", remote_script]),
+            "exec_mode": "host",
+        }
+    }
+    job_id = submit_payload(payload=payload, wait=wait)
+    print(f"hpc_update_job_id: {job_id}")
+    print("note: hpc worker will drain in-flight jobs, then restart with new code")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="hpc_queue control CLI",
@@ -866,6 +909,12 @@ def build_parser() -> argparse.ArgumentParser:
     status_cmd.add_argument("--json", action="store_true", help="output raw JSON status")
     stop_cmd = sub.add_parser("stop", help="stop worker process")
     stop_cmd.add_argument("--all", action="store_true", help="also clear jobs and results queues")
+    update_cmd = sub.add_parser("update", help="update local+HPC to latest main commit")
+    update_cmd.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="do not wait for the remote host update job result",
+    )
 
     return parser
 
@@ -887,8 +936,10 @@ def normalize_wait_flag(argv: list[str]) -> list[str]:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "job", "status", "stop"}
+    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "job", "status", "stop", "update"}
     argv = sys.argv[1:]
+    if argv and argv[0] == "--update":
+        argv = ["update", *argv[1:]]
     if argv and argv[0] not in known_commands and not argv[0].startswith("-"):
         # Shorthand: `q.py <command...>` behaves like `q.py submit <command...>`.
         argv = ["submit", *argv]
@@ -920,6 +971,8 @@ def main() -> None:
         cmd_status(args.json)
     elif args.command == "stop":
         cmd_stop(args.all)
+    elif args.command == "update":
+        cmd_update(wait=not args.no_wait)
     else:
         parser.error("unknown command")
 

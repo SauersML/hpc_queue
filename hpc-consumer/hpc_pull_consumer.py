@@ -41,6 +41,7 @@ DEFAULT_EXTERNAL_REPOS_ROOT = str(ROOT_DIR / "runtime" / "external-src")
 DEFAULT_GNOMON_REPO_URL = "https://github.com/SauersML/gnomon.git"
 DEFAULT_REAGLE_REPO_URL = "https://github.com/SauersML/reagle.git"
 DEFAULT_REPO_REF = "main"
+RELOAD_REQUEST_PATH = ROOT_DIR / "hpc-consumer" / "reload_requested"
 
 
 @dataclass
@@ -604,6 +605,7 @@ def process_once(
     results_dir: Path,
     completed_outcomes: list[dict[str, Any]],
     completed_lock: threading.Lock,
+    allow_pull: bool = True,
 ) -> None:
     done: list[threading.Thread] = [thread for thread in list(inflight.keys()) if not thread.is_alive()]
     if done:
@@ -616,6 +618,9 @@ def process_once(
         completed_outcomes.clear()
     if outcomes_to_ack:
         ack_retry_outcomes(config, outcomes_to_ack)
+
+    if not allow_pull:
+        return
 
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
@@ -674,9 +679,26 @@ def main() -> None:
     inflight: dict[threading.Thread, bool] = {}
     completed_outcomes: list[dict[str, Any]] = []
     completed_lock = threading.Lock()
+    drain_mode = False
     while True:
         try:
-            process_once(config, inflight, results_dir, completed_outcomes, completed_lock)
+            if not drain_mode and RELOAD_REQUEST_PATH.exists():
+                drain_mode = True
+                print("reload requested; entering drain mode (no new pulls)")
+
+            process_once(
+                config,
+                inflight,
+                results_dir,
+                completed_outcomes,
+                completed_lock,
+                allow_pull=not drain_mode,
+            )
+
+            if drain_mode and not inflight:
+                RELOAD_REQUEST_PATH.unlink(missing_ok=True)
+                print("drain complete; exiting for supervisor restart")
+                return
         except Exception as exc:
             print(f"poll loop error: {exc}")
         time.sleep(config.poll_interval_seconds)

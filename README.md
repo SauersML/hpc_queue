@@ -25,6 +25,18 @@ Run one command to configure:
 q login
 ```
 
+Update both local and HPC to latest `main` (commit-pinned install) in one command:
+
+```bash
+q update
+```
+
+`q update` behavior:
+- resolves latest commit on `main`
+- runs `curl .../<commit>/install.sh | bash` on local
+- submits an HPC host update job with the same commit
+- requests graceful HPC reload: finish in-flight jobs first, then restart worker
+
 ## Local machine
 
 Submit a command job:
@@ -163,6 +175,12 @@ q run-file --help
 `q stop`
 - Stops local worker/watcher processes.
 - `--all`: also clears jobs + results queues.
+
+`q update`
+- Updates local and HPC installs to latest `main` commit.
+- Uses commit-pinned install URL for reproducibility.
+- Requests graceful HPC worker reload (drain running jobs, then restart).
+- `--no-wait`: do not wait for remote host update job completion.
 
 ## HPC node
 
