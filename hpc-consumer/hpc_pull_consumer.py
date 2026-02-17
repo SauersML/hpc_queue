@@ -260,7 +260,6 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
     if not isinstance(job_input, dict):
         job_input = {}
     command = str(job_input.get("command", ""))
-    workdir = str(job_input.get("workdir", "/gnomon"))
     input_path.write_text(json.dumps({"job_id": job_id, "input": job_input}), encoding="utf-8")
     staged_files = stage_local_files(job_input, job_dir)
     try:
@@ -297,7 +296,7 @@ def run_compute(job: dict[str, Any], results_dir: Path, config: Config) -> tuple
         "job_id": job_id,
         "exec_mode": "container",
         "command": command,
-        "workdir": workdir,
+        "workdir": "/",
         "status": "completed" if proc.returncode == 0 else "failed",
         "started_at": started,
         "finished_at": finished,
