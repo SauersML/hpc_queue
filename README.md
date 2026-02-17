@@ -37,6 +37,12 @@ q update
 - submits an HPC host update job with the same commit
 - requests graceful HPC reload: finish in-flight jobs first, then restart worker
 
+Configure R2 keys once for private file grab transfers:
+
+```bash
+q login --r2-access-key-id "<R2_ACCESS_KEY_ID>" --r2-secret-access-key "<R2_SECRET_ACCESS_KEY>" --r2-bucket "hpc-queue-grab"
+```
+
 ## Local machine
 
 Submit a command job:
@@ -105,6 +111,26 @@ q logs <job_id>
 ```
 
 `q logs` reads local files when available, and otherwise falls back to cached queue result tails.
+
+Grab one file from HPC to local current directory (private transfer):
+
+```bash
+q grab <job_id> file.png
+q grab <job_id> /path/to/file.png
+q grab host /path/to/host/file.png
+```
+
+Choose a local output path:
+
+```bash
+q grab <job_id> /path/to/file.png --output ./my-copy.png
+q grab host /path/to/host/file.png -o ./downloads/
+```
+
+`q grab` behavior:
+- Uses private R2 presigned URLs under the hood.
+- Uploads from HPC (host mode or container file path mode), downloads to local.
+- Deletes the temporary object from R2 after local file is written.
 
 View one job's last known status (no queue polling):
 
@@ -181,6 +207,12 @@ q run-file --help
 - Uses commit-pinned install URL for reproducibility.
 - Requests graceful HPC worker reload (drain running jobs, then restart).
 - `--no-wait`: do not wait for remote host update job completion.
+
+`q grab <target> <path> [-o|--output <local_path>]`
+- `target=host`: path is resolved on HPC host filesystem.
+- `target=<job_id>`: path is resolved inside container context for that job.
+- Copies one file to local machine.
+- Auto-deletes temporary R2 object after local write succeeds.
 
 ## HPC node
 

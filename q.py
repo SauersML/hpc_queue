@@ -5,6 +5,8 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import getpass
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -17,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+from urllib.parse import quote, urlencode
 
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
@@ -36,6 +39,9 @@ DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_RESULTS_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_HPC_HEARTBEAT_MAX_AGE_SECONDS = 90.0
 REPO_URL = "https://github.com/SauersML/hpc_queue.git"
+DEFAULT_R2_ACCOUNT_ID = DEFAULT_CF_ACCOUNT_ID
+DEFAULT_R2_BUCKET = "hpc-queue-grab"
+DEFAULT_R2_REGION = "auto"
 
 
 def load_dotenv(path: Path) -> None:
@@ -124,7 +130,13 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
     path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 
 
-def cmd_login(queue_token: str | None, api_key: str | None) -> None:
+def cmd_login(
+    queue_token: str | None,
+    api_key: str | None,
+    r2_access_key_id: str | None,
+    r2_secret_access_key: str | None,
+    r2_bucket: str | None,
+) -> None:
     existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
     existing_api_key = os.getenv("API_KEY", "")
 
@@ -144,6 +156,12 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
         "CF_QUEUES_API_TOKEN": final_queue_token,
         "API_KEY": final_api_key,
     }
+    if r2_access_key_id:
+        updates["R2_ACCESS_KEY_ID"] = r2_access_key_id
+    if r2_secret_access_key:
+        updates["R2_SECRET_ACCESS_KEY"] = r2_secret_access_key
+    if r2_bucket:
+        updates["R2_BUCKET"] = r2_bucket
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
 
@@ -166,6 +184,72 @@ def build_submit_input(raw_parts: list[str], exec_mode: str) -> tuple[dict[str, 
     raw = shlex.join(raw_parts).strip()
     normalized, rewritten = normalize_python311_command(raw)
     return {"command": normalized, "exec_mode": exec_mode}, rewritten
+
+
+def _hmac_sha256(key: bytes, msg: str) -> bytes:
+    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+
+def _derive_sigv4_key(secret: str, date_yyyymmdd: str, region: str, service: str) -> bytes:
+    k_date = _hmac_sha256(("AWS4" + secret).encode("utf-8"), date_yyyymmdd)
+    k_region = hmac.new(k_date, region.encode("utf-8"), hashlib.sha256).digest()
+    k_service = hmac.new(k_region, service.encode("utf-8"), hashlib.sha256).digest()
+    return hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+
+
+def presign_r2_url(method: str, bucket: str, key: str, expires_seconds: int = 1800) -> str:
+    access_key = require_env("R2_ACCESS_KEY_ID")
+    secret_key = require_env("R2_SECRET_ACCESS_KEY")
+    account_id = os.getenv("R2_ACCOUNT_ID", DEFAULT_R2_ACCOUNT_ID).strip() or DEFAULT_R2_ACCOUNT_ID
+    region = os.getenv("R2_REGION", DEFAULT_R2_REGION).strip() or DEFAULT_R2_REGION
+    service = "s3"
+    host = f"{account_id}.r2.cloudflarestorage.com"
+    canonical_uri = f"/{quote(bucket, safe='')}/{quote(key, safe='/._-~')}"
+
+    now = datetime.now(timezone.utc)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_scope = now.strftime("%Y%m%d")
+    credential_scope = f"{date_scope}/{region}/{service}/aws4_request"
+    credential = f"{access_key}/{credential_scope}"
+
+    query_params: list[tuple[str, str]] = [
+        ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+        ("X-Amz-Credential", credential),
+        ("X-Amz-Date", amz_date),
+        ("X-Amz-Expires", str(max(1, min(expires_seconds, 604800)))),
+        ("X-Amz-SignedHeaders", "host"),
+    ]
+    canonical_qs = "&".join(
+        f"{quote(k, safe='')}={quote(v, safe='-_.~')}"
+        for k, v in sorted(query_params, key=lambda item: (item[0], item[1]))
+    )
+    canonical_headers = f"host:{host}\n"
+    signed_headers = "host"
+    payload_hash = "UNSIGNED-PAYLOAD"
+    canonical_request = "\n".join(
+        [
+            method.upper(),
+            canonical_uri,
+            canonical_qs,
+            canonical_headers,
+            signed_headers,
+            payload_hash,
+        ]
+    )
+    canonical_request_hash = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            canonical_request_hash,
+        ]
+    )
+    signing_key = _derive_sigv4_key(secret=secret_key, date_yyyymmdd=date_scope, region=region, service=service)
+    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    final_qs = canonical_qs + "&" + urlencode({"X-Amz-Signature": signature})
+    return f"https://{host}{canonical_uri}?{final_qs}"
 
 
 def build_run_file_input(
@@ -804,6 +888,88 @@ def cmd_update(wait: bool) -> None:
     print("note: hpc worker will drain in-flight jobs, then restart with new code")
 
 
+def _read_local_result(job_id: str) -> dict[str, Any]:
+    path = LOCAL_RESULTS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise RuntimeError(f"missing local result file: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _best_output_path(default_name: str, output: str | None) -> Path:
+    if output:
+        candidate = Path(output).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate / default_name
+        if str(output).endswith("/"):
+            return candidate / default_name
+        return candidate
+    return Path.cwd() / default_name
+
+
+def cmd_grab(target: str, source_path: str, output: str | None) -> None:
+    require_env("CF_QUEUES_API_TOKEN")
+    require_env("API_KEY")
+    bucket = os.getenv("R2_BUCKET", DEFAULT_R2_BUCKET).strip() or DEFAULT_R2_BUCKET
+    src = source_path.strip()
+    if not src:
+        raise RuntimeError("grab requires a non-empty source path")
+
+    basename = Path(src).name or "grab.bin"
+    object_key = f"grab/{int(time.time())}-{secrets.token_hex(8)}-{basename}"
+    put_url = presign_r2_url("PUT", bucket=bucket, key=object_key, expires_seconds=1800)
+    get_url = presign_r2_url("GET", bucket=bucket, key=object_key, expires_seconds=1800)
+    delete_url = presign_r2_url("DELETE", bucket=bucket, key=object_key, expires_seconds=1800)
+
+    if target == "host":
+        remote_script = (
+            "set -euo pipefail; "
+            f"SRC={shlex.quote(src)}; "
+            "[ -f \"$SRC\" ] || { echo \"missing file: $SRC\" >&2; exit 1; }; "
+            f"curl -fsS -X PUT --data-binary @\"$SRC\" {shlex.quote(put_url)} >/dev/null; "
+            "echo uploaded"
+        )
+    else:
+        job_id = target
+        remote_script = (
+            "set -euo pipefail; "
+            f"JOB_ID={shlex.quote(job_id)}; "
+            "ROOT=\"$HOME/.local/share/hpc_queue\"; "
+            "JOB_DIR=\"$ROOT/results/$JOB_ID\"; "
+            "[ -d \"$JOB_DIR\" ] || { echo \"missing job dir: $JOB_DIR\" >&2; exit 1; }; "
+            f"TARGET={shlex.quote(src)}; "
+            "IMG=\"$ROOT/runtime/hpc-queue-runtime.sif\"; "
+            "APP=\"${APPTAINER_BIN:-apptainer}\"; "
+            "[ -x \"$(command -v \"$APP\")\" ] || { echo \"apptainer not found\" >&2; exit 1; }; "
+            f"$APP exec --bind \"$JOB_DIR:/work\" \"$IMG\" /bin/bash -lc "
+            f"{shlex.quote('set -euo pipefail; [ -f \"$TARGET\" ] || { echo \"missing file in container: $TARGET\" >&2; exit 1; }; cat \"$TARGET\"')} "
+            f"| curl -fsS -X PUT --data-binary @- {shlex.quote(put_url)} >/dev/null; "
+            "echo uploaded"
+        )
+
+    payload = {"input": {"command": shlex.join(["bash", "-lc", remote_script]), "exec_mode": "host"}}
+    job_id = submit_payload(payload=payload, wait=True)
+    record = _read_local_result(job_id)
+    if str(record.get("status")) != "completed" or int(record.get("exit_code", 1)) != 0:
+        stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+        stderr_tail = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
+        raise RuntimeError(f"grab staging failed on hpc for job {job_id}\n{stderr_tail}")
+
+    out_path = _best_output_path(default_name=basename, output=output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    req = request.Request(get_url, method="GET")
+    with request.urlopen(req, timeout=120) as resp:
+        data = resp.read()
+    out_path.write_bytes(data)
+    print(f"saved: {out_path.resolve()}")
+    print(f"bytes: {len(data)}")
+
+    try:
+        request.urlopen(request.Request(delete_url, method="DELETE"), timeout=30).read()
+        print("remote_cleanup: deleted from private bucket")
+    except Exception as exc:
+        print(f"warning: remote_cleanup_failed: {exc}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="hpc_queue control CLI",
@@ -814,6 +980,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  q submit --wait \"python -V\"\n"
             "  q host --wait \"hostname\"\n"
             "  q logs <job_id>\n"
+            "  q grab host /path/to/host/file -o ./\n"
             "  q status\n"
             "\n"
             "Container mounts:\n"
@@ -894,6 +1061,9 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
+    login.add_argument("--r2-access-key-id", help="R2 S3 access key id for private grab transfers")
+    login.add_argument("--r2-secret-access-key", help="R2 S3 secret key for private grab transfers")
+    login.add_argument("--r2-bucket", help=f'R2 bucket for private grab transfers (default: "{DEFAULT_R2_BUCKET}")')
     sub.add_parser("start", help="start compute worker")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
@@ -915,6 +1085,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="do not wait for the remote host update job result",
     )
+    grab = sub.add_parser("grab", help="copy one file from HPC host/container to local via private R2")
+    grab.add_argument("target", help='job id for container path mode, or literal "host" for host path mode')
+    grab.add_argument("path", help="file path to grab")
+    grab.add_argument("-o", "--output", help="local output file path (or target directory)")
 
     return parser
 
@@ -936,7 +1110,7 @@ def normalize_wait_flag(argv: list[str]) -> list[str]:
 def main() -> None:
     load_dotenv(ENV_PATH)
     parser = build_parser()
-    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "job", "status", "stop", "update"}
+    known_commands = {"submit", "host", "run-file", "login", "start", "worker", "results", "clear", "logs", "job", "status", "stop", "update", "grab"}
     argv = sys.argv[1:]
     if argv and argv[0] == "--update":
         argv = ["update", *argv[1:]]
@@ -956,6 +1130,9 @@ def main() -> None:
         cmd_login(
             queue_token=args.queue_token,
             api_key=args.api_key,
+            r2_access_key_id=args.r2_access_key_id,
+            r2_secret_access_key=args.r2_secret_access_key,
+            r2_bucket=args.r2_bucket,
         )
     elif args.command in {"start", "worker"}:
         cmd_worker()
@@ -973,6 +1150,8 @@ def main() -> None:
         cmd_stop(args.all)
     elif args.command == "update":
         cmd_update(wait=not args.no_wait)
+    elif args.command == "grab":
+        cmd_grab(target=args.target, source_path=args.path, output=args.output)
     else:
         parser.error("unknown command")
 
