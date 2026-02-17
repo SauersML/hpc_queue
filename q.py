@@ -5,8 +5,6 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import getpass
-import hashlib
-import hmac
 import json
 import os
 import re
@@ -19,7 +17,6 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
-from urllib.parse import quote, urlencode
 
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
@@ -39,9 +36,6 @@ DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_RESULTS_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_HPC_HEARTBEAT_MAX_AGE_SECONDS = 90.0
 REPO_URL = "https://github.com/SauersML/hpc_queue.git"
-DEFAULT_R2_ACCOUNT_ID = DEFAULT_CF_ACCOUNT_ID
-DEFAULT_R2_BUCKET = "hpc-queue-grab"
-DEFAULT_R2_REGION = "auto"
 
 
 def load_dotenv(path: Path) -> None:
@@ -133,8 +127,6 @@ def upsert_env(path: Path, updates: dict[str, str]) -> None:
 def cmd_login(
     queue_token: str | None,
     api_key: str | None,
-    r2_access_key_id: str | None,
-    r2_secret_access_key: str | None,
 ) -> None:
     existing_queue_token = os.getenv("CF_QUEUES_API_TOKEN", "")
     existing_api_key = os.getenv("API_KEY", "")
@@ -155,10 +147,6 @@ def cmd_login(
         "CF_QUEUES_API_TOKEN": final_queue_token,
         "API_KEY": final_api_key,
     }
-    if r2_access_key_id:
-        updates["R2_ACCESS_KEY_ID"] = r2_access_key_id
-    if r2_secret_access_key:
-        updates["R2_SECRET_ACCESS_KEY"] = r2_secret_access_key
     upsert_env(ENV_PATH, updates)
     load_dotenv(ENV_PATH)
 
@@ -183,70 +171,48 @@ def build_submit_input(raw_parts: list[str], exec_mode: str) -> tuple[dict[str, 
     return {"command": normalized, "exec_mode": exec_mode}, rewritten
 
 
-def _hmac_sha256(key: bytes, msg: str) -> bytes:
-    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
-
-
-def _derive_sigv4_key(secret: str, date_yyyymmdd: str, region: str, service: str) -> bytes:
-    k_date = _hmac_sha256(("AWS4" + secret).encode("utf-8"), date_yyyymmdd)
-    k_region = hmac.new(k_date, region.encode("utf-8"), hashlib.sha256).digest()
-    k_service = hmac.new(k_region, service.encode("utf-8"), hashlib.sha256).digest()
-    return hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
-
-
-def presign_r2_url(method: str, bucket: str, key: str, expires_seconds: int = 1800) -> str:
-    access_key = require_env("R2_ACCESS_KEY_ID")
-    secret_key = require_env("R2_SECRET_ACCESS_KEY")
-    account_id = os.getenv("R2_ACCOUNT_ID", DEFAULT_R2_ACCOUNT_ID).strip() or DEFAULT_R2_ACCOUNT_ID
-    region = os.getenv("R2_REGION", DEFAULT_R2_REGION).strip() or DEFAULT_R2_REGION
-    service = "s3"
-    host = f"{account_id}.r2.cloudflarestorage.com"
-    canonical_uri = f"/{quote(bucket, safe='')}/{quote(key, safe='/._-~')}"
-
-    now = datetime.now(timezone.utc)
-    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
-    date_scope = now.strftime("%Y%m%d")
-    credential_scope = f"{date_scope}/{region}/{service}/aws4_request"
-    credential = f"{access_key}/{credential_scope}"
-
-    query_params: list[tuple[str, str]] = [
-        ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
-        ("X-Amz-Credential", credential),
-        ("X-Amz-Date", amz_date),
-        ("X-Amz-Expires", str(max(1, min(expires_seconds, 604800)))),
-        ("X-Amz-SignedHeaders", "host"),
-    ]
-    canonical_qs = "&".join(
-        f"{quote(k, safe='')}={quote(v, safe='-_.~')}"
-        for k, v in sorted(query_params, key=lambda item: (item[0], item[1]))
+def get_grab_presigned_urls(object_key: str, expires_seconds: int = 1800) -> dict[str, str]:
+    api_key = require_env("API_KEY")
+    worker_url = DEFAULT_WORKER_URL.rstrip("/")
+    req = request.Request(
+        url=f"{worker_url}/grab/presign",
+        data=json.dumps(
+            {
+                "object_key": object_key,
+                "expires_seconds": expires_seconds,
+            }
+        ).encode("utf-8"),
+        method="POST",
+        headers={
+            "content-type": "application/json",
+            "x-api-key": api_key,
+            "accept": "application/json",
+            "user-agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/121.0.0.0 Safari/537.36"
+            ),
+            "accept-language": "en-US,en;q=0.9",
+        },
     )
-    canonical_headers = f"host:{host}\n"
-    signed_headers = "host"
-    payload_hash = "UNSIGNED-PAYLOAD"
-    canonical_request = "\n".join(
-        [
-            method.upper(),
-            canonical_uri,
-            canonical_qs,
-            canonical_headers,
-            signed_headers,
-            payload_hash,
-        ]
-    )
-    canonical_request_hash = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
-    string_to_sign = "\n".join(
-        [
-            "AWS4-HMAC-SHA256",
-            amz_date,
-            credential_scope,
-            canonical_request_hash,
-        ]
-    )
-    signing_key = _derive_sigv4_key(secret=secret_key, date_yyyymmdd=date_scope, region=region, service=service)
-    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    try:
+        with request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"grab presign failed: HTTP {exc.code}: {detail}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"grab presign request failed: {exc}") from exc
 
-    final_qs = canonical_qs + "&" + urlencode({"X-Amz-Signature": signature})
-    return f"https://{host}{canonical_uri}?{final_qs}"
+    urls = body.get("urls") if isinstance(body, dict) else None
+    if not isinstance(urls, dict):
+        raise RuntimeError(f"grab presign failed: invalid response: {body}")
+    put = str(urls.get("put", "")).strip()
+    get = str(urls.get("get", "")).strip()
+    delete = str(urls.get("delete", "")).strip()
+    if not put or not get or not delete:
+        raise RuntimeError(f"grab presign failed: missing urls: {body}")
+    return {"put": put, "get": get, "delete": delete}
 
 
 def build_run_file_input(
@@ -906,16 +872,16 @@ def _best_output_path(default_name: str, output: str | None) -> Path:
 def cmd_grab(target: str, source_path: str, output: str | None) -> None:
     require_env("CF_QUEUES_API_TOKEN")
     require_env("API_KEY")
-    bucket = DEFAULT_R2_BUCKET
     src = source_path.strip()
     if not src:
         raise RuntimeError("grab requires a non-empty source path")
 
     basename = Path(src).name or "grab.bin"
     object_key = f"grab/{int(time.time())}-{secrets.token_hex(8)}-{basename}"
-    put_url = presign_r2_url("PUT", bucket=bucket, key=object_key, expires_seconds=1800)
-    get_url = presign_r2_url("GET", bucket=bucket, key=object_key, expires_seconds=1800)
-    delete_url = presign_r2_url("DELETE", bucket=bucket, key=object_key, expires_seconds=1800)
+    urls = get_grab_presigned_urls(object_key=object_key, expires_seconds=1800)
+    put_url = urls["put"]
+    get_url = urls["get"]
+    delete_url = urls["delete"]
 
     if target == "host":
         remote_script = (
@@ -1058,8 +1024,6 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="configure local .env")
     login.add_argument("--queue-token", help="queue-token for Cloudflare Queue API")
     login.add_argument("--api-key", help="api-key for /jobs auth; auto-generated if omitted")
-    login.add_argument("--r2-access-key-id", help="R2 S3 access key id for private grab transfers")
-    login.add_argument("--r2-secret-access-key", help="R2 S3 secret key for private grab transfers")
     sub.add_parser("start", help="start compute worker")
     sub.add_parser("worker", help="deprecated alias for start")
     sub.add_parser("results", help="pull one batch of results on local machine")
@@ -1126,8 +1090,6 @@ def main() -> None:
         cmd_login(
             queue_token=args.queue_token,
             api_key=args.api_key,
-            r2_access_key_id=args.r2_access_key_id,
-            r2_secret_access_key=args.r2_secret_access_key,
         )
     elif args.command in {"start", "worker"}:
         cmd_worker()
