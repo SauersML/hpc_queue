@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import getpass
 import json
 import os
+import re
 import secrets
 import shlex
 import stat
@@ -152,12 +153,18 @@ def cmd_login(queue_token: str | None, api_key: str | None) -> None:
         print("api-key: kept existing/provided value")
 
 
-def build_submit_input(raw_parts: list[str], exec_mode: str) -> dict[str, Any]:
+def normalize_python311_command(command: str) -> tuple[str, bool]:
+    normalized = re.sub(r"(?<![\w./-])python3\.11(?![\w.-])", "python", command)
+    return normalized, normalized != command
+
+
+def build_submit_input(raw_parts: list[str], exec_mode: str) -> tuple[dict[str, Any], bool]:
     if not raw_parts:
         raise RuntimeError("submit requires a command")
     # Preserve original argv argument boundaries (critical for forms like: bash -lc '...').
     raw = shlex.join(raw_parts).strip()
-    return {"command": raw, "exec_mode": exec_mode}
+    normalized, rewritten = normalize_python311_command(raw)
+    return {"command": normalized, "exec_mode": exec_mode}, rewritten
 
 
 def build_run_file_input(
@@ -339,7 +346,10 @@ def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -
     if not wait and "--wait" in raw_parts:
         wait = True
         raw_parts = [part for part in raw_parts if part != "--wait"]
-    payload = {"input": build_submit_input(raw_parts, exec_mode=exec_mode)}
+    submit_input, rewritten = build_submit_input(raw_parts, exec_mode=exec_mode)
+    if rewritten:
+        print("warning: replaced python3.11 with python for runtime compatibility")
+    payload = {"input": submit_input}
     job_id = submit_payload(payload=payload, wait=wait)
     if wait and job_id:
         cmd_logs(job_id)
