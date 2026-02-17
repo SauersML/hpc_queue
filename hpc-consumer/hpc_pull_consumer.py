@@ -10,7 +10,6 @@ This process runs on the compute node and repeatedly:
 from __future__ import annotations
 
 import base64
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import subprocess
@@ -26,7 +25,6 @@ DEFAULT_CF_ACCOUNT_ID = "59908b351c3a3321ff84dd2d78bf0b42"
 DEFAULT_CF_JOBS_QUEUE_ID = "f52e2e6bb569425894ede9141e9343a5"
 DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_PULL_BATCH_SIZE = 100
-DEFAULT_MAX_PARALLEL_JOBS = 100
 DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_RETRY_DELAY_SECONDS = 30
@@ -50,7 +48,6 @@ class Config:
     jobs_queue_id: str
     results_queue_id: str
     api_token: str
-    max_parallel_jobs: int = 100
     visibility_timeout_ms: int = 120000
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
@@ -94,7 +91,6 @@ def load_config() -> Config:
         jobs_queue_id=DEFAULT_CF_JOBS_QUEUE_ID,
         results_queue_id=DEFAULT_CF_RESULTS_QUEUE_ID,
         api_token=req("CF_QUEUES_API_TOKEN"),
-        max_parallel_jobs=DEFAULT_MAX_PARALLEL_JOBS,
         visibility_timeout_ms=DEFAULT_VISIBILITY_TIMEOUT_MS,
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
@@ -582,36 +578,47 @@ def ack_retry_outcomes(config: Config, outcomes: list[dict[str, Any]]) -> None:
     )
 
 
+def process_message_worker(
+    message: dict[str, Any],
+    config: Config,
+    results_dir: Path,
+    completed_outcomes: list[dict[str, Any]],
+    completed_lock: threading.Lock,
+) -> None:
+    try:
+        outcome = process_message(message, config, results_dir)
+        if outcome:
+            with completed_lock:
+                completed_outcomes.append(outcome)
+    except Exception as exc:
+        # process_message should already handle exceptions; this is a hard safety net.
+        print(f"job worker crashed unexpectedly: {exc}")
+
+
 def process_once(
     config: Config,
-    pool: ThreadPoolExecutor,
-    inflight: dict[Any, bool],
+    inflight: dict[threading.Thread, bool],
     results_dir: Path,
+    completed_outcomes: list[dict[str, Any]],
+    completed_lock: threading.Lock,
 ) -> None:
-    done: list[Any] = [future for future in list(inflight.keys()) if future.done()]
+    done: list[threading.Thread] = [thread for thread in list(inflight.keys()) if not thread.is_alive()]
     if done:
-        outcomes: list[dict[str, Any]] = []
-        for future in done:
-            inflight.pop(future, None)
-            try:
-                outcome = future.result()
-                if outcome:
-                    outcomes.append(outcome)
-            except Exception as exc:
-                # Should be rare because process_message handles its own exceptions.
-                print(f"worker future crashed: {exc}")
-        if outcomes:
-            ack_retry_outcomes(config, outcomes)
+        for thread in done:
+            inflight.pop(thread, None)
+            thread.join(timeout=0)
 
-    available_slots = max(0, config.max_parallel_jobs - len(inflight))
-    if available_slots <= 0:
-        return
+    with completed_lock:
+        outcomes_to_ack = list(completed_outcomes)
+        completed_outcomes.clear()
+    if outcomes_to_ack:
+        ack_retry_outcomes(config, outcomes_to_ack)
 
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
         token=config.api_token,
         payload={
-            "batch_size": min(DEFAULT_PULL_BATCH_SIZE, available_slots),
+            "batch_size": DEFAULT_PULL_BATCH_SIZE,
             "visibility_timeout_ms": config.visibility_timeout_ms,
         },
     )
@@ -626,8 +633,14 @@ def process_once(
         return
 
     for message in messages:
-        future = pool.submit(process_message, message, config, results_dir)
-        inflight[future] = True
+        thread = threading.Thread(
+            target=process_message_worker,
+            args=(message, config, results_dir, completed_outcomes, completed_lock),
+            daemon=True,
+            name="job-worker",
+        )
+        inflight[thread] = True
+        thread.start()
 
 
 def main() -> None:
@@ -641,7 +654,6 @@ def main() -> None:
                 "jobs_queue_id": config.jobs_queue_id,
                 "results_queue_id": config.results_queue_id,
                 "batch_size": DEFAULT_PULL_BATCH_SIZE,
-                "max_parallel_jobs": config.max_parallel_jobs,
                 "visibility_timeout_ms": config.visibility_timeout_ms,
                 "poll_interval_seconds": config.poll_interval_seconds,
             }
@@ -656,14 +668,15 @@ def main() -> None:
     )
     heartbeat_thread.start()
 
-    inflight: dict[Any, bool] = {}
-    with ThreadPoolExecutor(max_workers=config.max_parallel_jobs, thread_name_prefix="job-worker") as pool:
-        while True:
-            try:
-                process_once(config, pool, inflight, results_dir)
-            except Exception as exc:
-                print(f"poll loop error: {exc}")
-            time.sleep(config.poll_interval_seconds)
+    inflight: dict[threading.Thread, bool] = {}
+    completed_outcomes: list[dict[str, Any]] = []
+    completed_lock = threading.Lock()
+    while True:
+        try:
+            process_once(config, inflight, results_dir, completed_outcomes, completed_lock)
+        except Exception as exc:
+            print(f"poll loop error: {exc}")
+        time.sleep(config.poll_interval_seconds)
 
 
 if __name__ == "__main__":
