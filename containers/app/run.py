@@ -17,6 +17,7 @@ INPUT_PATH = Path("/work/input.json")
 OUTPUT_PATH = Path("/work/output.json")
 STDOUT_PATH = Path("/work/stdout.log")
 STDERR_PATH = Path("/work/stderr.log")
+DEFAULT_CONTAINER_WORKDIR = Path("/gnomon")
 
 
 def main() -> None:
@@ -24,9 +25,22 @@ def main() -> None:
     job_id = str(payload.get("job_id", "unknown"))
     data = payload.get("input", {})
     command = str(data.get("command", "echo no command provided"))
+    requested_workdir = str(data.get("workdir", "")).strip()
+    if requested_workdir:
+        workdir = Path(requested_workdir)
+    elif DEFAULT_CONTAINER_WORKDIR.exists():
+        workdir = DEFAULT_CONTAINER_WORKDIR
+    else:
+        workdir = Path("/")
 
     started_at = datetime.now(timezone.utc).isoformat()
-    proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd="/")
+    proc = subprocess.run(
+        command,
+        shell=True,
+        capture_output=True,
+        text=True,
+        cwd=str(workdir),
+    )
     finished_at = datetime.now(timezone.utc).isoformat()
 
     STDOUT_PATH.write_text(proc.stdout, encoding="utf-8")
@@ -40,6 +54,7 @@ def main() -> None:
         "exit_code": proc.returncode,
         "result": {
             "command": command,
+            "workdir": str(workdir),
             "stdout_path": str(STDOUT_PATH),
             "stderr_path": str(STDERR_PATH),
         },
