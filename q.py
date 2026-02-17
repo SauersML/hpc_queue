@@ -851,18 +851,18 @@ def cmd_grab(target: str, source_path: str, output: str | None) -> None:
         )
     else:
         job_id = target
+        target_quoted = shlex.quote(src)
         remote_script = (
             "set -euo pipefail; "
             f"JOB_ID={shlex.quote(job_id)}; "
             "ROOT=\"$HOME/.local/share/hpc_queue\"; "
             "JOB_DIR=\"$ROOT/results/$JOB_ID\"; "
             "[ -d \"$JOB_DIR\" ] || { echo \"missing job dir: $JOB_DIR\" >&2; exit 1; }; "
-            f"TARGET={shlex.quote(src)}; "
             "IMG=\"$ROOT/runtime/hpc-queue-runtime.sif\"; "
             "APP=\"${APPTAINER_BIN:-apptainer}\"; "
             "[ -x \"$(command -v \"$APP\")\" ] || { echo \"apptainer not found\" >&2; exit 1; }; "
             f"$APP exec --bind \"$JOB_DIR:/work\" \"$IMG\" /bin/bash -lc "
-            f"{shlex.quote('set -euo pipefail; [ -f \"$TARGET\" ] || { echo \"missing file in container: $TARGET\" >&2; exit 1; }; cat \"$TARGET\"')} "
+            f"{shlex.quote(f'set -euo pipefail; [ -f {target_quoted} ] || {{ echo missing file in container: {target_quoted} >&2; exit 1; }}; cat {target_quoted}')} "
             f"| curl -fsS -X POST -H \"x-api-key: $API_KEY\" --data-binary @- {shlex.quote(upload_url)} >/dev/null; "
             "echo uploaded"
         )
