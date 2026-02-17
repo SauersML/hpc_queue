@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent
 ENV_PATH = ROOT / ".env"
@@ -169,50 +170,6 @@ def build_submit_input(raw_parts: list[str], exec_mode: str) -> tuple[dict[str, 
     raw = shlex.join(raw_parts).strip()
     normalized, rewritten = normalize_python311_command(raw)
     return {"command": normalized, "exec_mode": exec_mode}, rewritten
-
-
-def get_grab_presigned_urls(object_key: str, expires_seconds: int = 1800) -> dict[str, str]:
-    api_key = require_env("API_KEY")
-    worker_url = DEFAULT_WORKER_URL.rstrip("/")
-    req = request.Request(
-        url=f"{worker_url}/grab/presign",
-        data=json.dumps(
-            {
-                "object_key": object_key,
-                "expires_seconds": expires_seconds,
-            }
-        ).encode("utf-8"),
-        method="POST",
-        headers={
-            "content-type": "application/json",
-            "x-api-key": api_key,
-            "accept": "application/json",
-            "user-agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/121.0.0.0 Safari/537.36"
-            ),
-            "accept-language": "en-US,en;q=0.9",
-        },
-    )
-    try:
-        with request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"grab presign failed: HTTP {exc.code}: {detail}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"grab presign request failed: {exc}") from exc
-
-    urls = body.get("urls") if isinstance(body, dict) else None
-    if not isinstance(urls, dict):
-        raise RuntimeError(f"grab presign failed: invalid response: {body}")
-    put = str(urls.get("put", "")).strip()
-    get = str(urls.get("get", "")).strip()
-    delete = str(urls.get("delete", "")).strip()
-    if not put or not get or not delete:
-        raise RuntimeError(f"grab presign failed: missing urls: {body}")
-    return {"put": put, "get": get, "delete": delete}
 
 
 def build_run_file_input(
@@ -871,24 +828,25 @@ def _best_output_path(default_name: str, output: str | None) -> Path:
 
 def cmd_grab(target: str, source_path: str, output: str | None) -> None:
     require_env("CF_QUEUES_API_TOKEN")
-    require_env("API_KEY")
+    api_key = require_env("API_KEY")
     src = source_path.strip()
     if not src:
         raise RuntimeError("grab requires a non-empty source path")
 
     basename = Path(src).name or "grab.bin"
     object_key = f"grab/{int(time.time())}-{secrets.token_hex(8)}-{basename}"
-    urls = get_grab_presigned_urls(object_key=object_key, expires_seconds=1800)
-    put_url = urls["put"]
-    get_url = urls["get"]
-    delete_url = urls["delete"]
+    worker_url = DEFAULT_WORKER_URL.rstrip("/")
+    object_key_q = quote(object_key, safe="/._-~")
+    upload_url = f"{worker_url}/grab/upload?object_key={object_key_q}"
+    download_url = f"{worker_url}/grab/download?object_key={object_key_q}"
+    delete_url = f"{worker_url}/grab/delete?object_key={object_key_q}"
 
     if target == "host":
         remote_script = (
             "set -euo pipefail; "
             f"SRC={shlex.quote(src)}; "
             "[ -f \"$SRC\" ] || { echo \"missing file: $SRC\" >&2; exit 1; }; "
-            f"curl -fsS -X PUT --data-binary @\"$SRC\" {shlex.quote(put_url)} >/dev/null; "
+            f"curl -fsS -X POST -H \"x-api-key: $API_KEY\" --data-binary @\"$SRC\" {shlex.quote(upload_url)} >/dev/null; "
             "echo uploaded"
         )
     else:
@@ -905,7 +863,7 @@ def cmd_grab(target: str, source_path: str, output: str | None) -> None:
             "[ -x \"$(command -v \"$APP\")\" ] || { echo \"apptainer not found\" >&2; exit 1; }; "
             f"$APP exec --bind \"$JOB_DIR:/work\" \"$IMG\" /bin/bash -lc "
             f"{shlex.quote('set -euo pipefail; [ -f \"$TARGET\" ] || { echo \"missing file in container: $TARGET\" >&2; exit 1; }; cat \"$TARGET\"')} "
-            f"| curl -fsS -X PUT --data-binary @- {shlex.quote(put_url)} >/dev/null; "
+            f"| curl -fsS -X POST -H \"x-api-key: $API_KEY\" --data-binary @- {shlex.quote(upload_url)} >/dev/null; "
             "echo uploaded"
         )
 
@@ -920,7 +878,16 @@ def cmd_grab(target: str, source_path: str, output: str | None) -> None:
     out_path = _best_output_path(default_name=basename, output=output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["curl", "-fsS", "-L", get_url, "-o", str(out_path)],
+        [
+            "curl",
+            "-fsS",
+            "-L",
+            "-H",
+            f"x-api-key: {api_key}",
+            download_url,
+            "-o",
+            str(out_path),
+        ],
         check=True,
     )
     data = out_path.read_bytes()
@@ -928,7 +895,11 @@ def cmd_grab(target: str, source_path: str, output: str | None) -> None:
     print(f"bytes: {len(data)}")
 
     try:
-        subprocess.run(["curl", "-fsS", "-X", "DELETE", delete_url], check=True, capture_output=True)
+        subprocess.run(
+            ["curl", "-fsS", "-X", "POST", "-H", f"x-api-key: {api_key}", delete_url],
+            check=True,
+            capture_output=True,
+        )
         print("remote_cleanup: deleted from private bucket")
     except Exception as exc:
         print(f"warning: remote_cleanup_failed: {exc}")

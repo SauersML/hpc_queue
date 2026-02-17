@@ -25,6 +25,12 @@ type PresignRequest = {
   expires_seconds?: number;
 };
 
+function requireObjectKey(url: URL): string | null {
+  const key = (url.searchParams.get("object_key") ?? "").trim();
+  if (!key || key.includes("..")) return null;
+  return key;
+}
+
 const ADJECTIVES = [
   "adaptive", "aerobic", "agile", "alkaline", "amber", "ancient", "aquatic", "arctic", "axial",
   "basal", "bioactive", "biogenic", "biologic", "biotic", "bold", "brisk", "calm", "carbonic",
@@ -269,6 +275,69 @@ export default {
         });
       } catch (err) {
         return jsonResponse({ error: "presign_failed", detail: String(err) }, 500);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/grab/upload") {
+      const objectKey = requireObjectKey(url);
+      if (!objectKey) {
+        return jsonResponse({ error: "invalid_object_key" }, 400);
+      }
+      try {
+        const putUrl = await presignR2Url(env, "PUT", objectKey, 1800);
+        const upstream = await fetch(putUrl, {
+          method: "PUT",
+          body: request.body,
+        });
+        if (!upstream.ok) {
+          const detail = await upstream.text();
+          return jsonResponse({ error: "upload_failed", status: upstream.status, detail }, 502);
+        }
+        return jsonResponse({ ok: true, object_key: objectKey });
+      } catch (err) {
+        return jsonResponse({ error: "upload_failed", detail: String(err) }, 500);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/grab/download") {
+      const objectKey = requireObjectKey(url);
+      if (!objectKey) {
+        return jsonResponse({ error: "invalid_object_key" }, 400);
+      }
+      try {
+        const getUrl = await presignR2Url(env, "GET", objectKey, 1800);
+        const upstream = await fetch(getUrl, { method: "GET" });
+        if (!upstream.ok) {
+          const detail = await upstream.text();
+          return jsonResponse({ error: "download_failed", status: upstream.status, detail }, 502);
+        }
+        return new Response(upstream.body, {
+          status: 200,
+          headers: {
+            "content-type": upstream.headers.get("content-type") ?? "application/octet-stream",
+            "cache-control": "no-store",
+          },
+        });
+      } catch (err) {
+        return jsonResponse({ error: "download_failed", detail: String(err) }, 500);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/grab/delete") {
+      const objectKey = requireObjectKey(url);
+      if (!objectKey) {
+        return jsonResponse({ error: "invalid_object_key" }, 400);
+      }
+      try {
+        const deleteUrl = await presignR2Url(env, "DELETE", objectKey, 1800);
+        const upstream = await fetch(deleteUrl, { method: "DELETE" });
+        if (!upstream.ok) {
+          const detail = await upstream.text();
+          return jsonResponse({ error: "delete_failed", status: upstream.status, detail }, 502);
+        }
+        return jsonResponse({ ok: true, object_key: objectKey });
+      } catch (err) {
+        return jsonResponse({ error: "delete_failed", detail: String(err) }, 500);
       }
     }
 
