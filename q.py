@@ -652,18 +652,6 @@ def cmd_status(output_json: bool = False) -> None:
         if not local_running:
             local_pid = ""
 
-    # On local machines, ensure watcher is running so status can learn heartbeat.
-    if not running and not local_running and os.getenv("CF_QUEUES_API_TOKEN", ""):
-        try:
-            ensure_local_watcher_running()
-            if LOCAL_WATCHER_PID_FILE.exists():
-                local_pid = LOCAL_WATCHER_PID_FILE.read_text(encoding="utf-8").strip()
-                local_running = process_matches(local_pid, "local_pull_results.py --loop")
-                if not local_running:
-                    local_pid = ""
-        except Exception:
-            pass
-
     heartbeat = None
     heartbeat_age_seconds = None
     hpc_running_remote = None
@@ -712,11 +700,11 @@ def cmd_status(output_json: bool = False) -> None:
     print(f"host: {os.uname().nodename}")
     if running:
         if worker_running:
-            print(f"hpc consumer (this machine): running (supervisor pid {pid}, worker pid {worker_pid})")
+            print(f"worker daemon (this machine): running (supervisor pid {pid}, worker pid {worker_pid})")
         else:
-            print(f"hpc consumer (this machine): restarting worker (supervisor pid {pid})")
+            print(f"worker daemon (this machine): restarting worker (supervisor pid {pid})")
     else:
-        print("hpc consumer (this machine): not running")
+        print("worker daemon (this machine): not running")
 
     if local_running:
         print(f"local results watcher: running (pid {local_pid})")
@@ -727,13 +715,13 @@ def cmd_status(output_json: bool = False) -> None:
         hb_host = str((heartbeat or {}).get("hostname", "unknown"))
         hb_pid = str((heartbeat or {}).get("pid", "unknown"))
         age = int(heartbeat_age_seconds or 0)
-        print(f"remote hpc heartbeat: healthy ({age}s ago, host={hb_host}, pid={hb_pid})")
+        print(f"remote worker heartbeat: healthy ({age}s ago, host={hb_host}, pid={hb_pid})")
     elif hpc_running_remote is False:
         hb_host = str((heartbeat or {}).get("hostname", "unknown"))
         age = int(heartbeat_age_seconds or 0)
-        print(f"remote hpc heartbeat: stale ({age}s ago, last_host={hb_host})")
+        print(f"remote worker heartbeat: stale ({age}s ago, last_host={hb_host})")
     else:
-        print("remote hpc heartbeat: unknown (no heartbeat received yet)")
+        print("remote worker heartbeat: unknown (no heartbeat received yet)")
 
 
 def cmd_stop(stop_all: bool) -> None:
