@@ -697,14 +697,24 @@ def cmd_status(output_json: bool = False) -> None:
         print(json.dumps(payload))
         return
 
-    print(f"host: {os.uname().nodename}")
+    this_host = os.uname().nodename
+    hb_host = str((heartbeat or {}).get("hostname", "unknown"))
+    print(f"host: {this_host}")
+    client_mode = (
+        not running
+        and hb_host not in {"", "unknown"}
+        and hb_host != this_host
+    )
     if running:
         if worker_running:
             print(f"worker daemon (this machine): running (supervisor pid {pid}, worker pid {worker_pid})")
         else:
             print(f"worker daemon (this machine): restarting worker (supervisor pid {pid})")
     else:
-        print("worker daemon (this machine): not running")
+        if client_mode:
+            print("worker daemon (this machine): not running (client machine)")
+        else:
+            print("worker daemon (this machine): not running")
 
     if local_running:
         print(f"local results watcher: running (pid {local_pid})")
@@ -712,12 +722,10 @@ def cmd_status(output_json: bool = False) -> None:
         print("local results watcher: not running")
 
     if hpc_running_remote is True:
-        hb_host = str((heartbeat or {}).get("hostname", "unknown"))
         hb_pid = str((heartbeat or {}).get("pid", "unknown"))
         age = int(heartbeat_age_seconds or 0)
         print(f"remote worker heartbeat: healthy ({age}s ago, host={hb_host}, pid={hb_pid})")
     elif hpc_running_remote is False:
-        hb_host = str((heartbeat or {}).get("hostname", "unknown"))
         age = int(heartbeat_age_seconds or 0)
         print(f"remote worker heartbeat: stale ({age}s ago, last_host={hb_host})")
     else:
