@@ -25,6 +25,33 @@ type PresignRequest = {
   expires_seconds?: number;
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isQueueRateLimitError(err: unknown): boolean {
+  const text = String(err);
+  return text.includes("Too Many Requests") || text.includes("429");
+}
+
+async function enqueueWithRetry(queue: Queue, job: JobMessage, maxAttempts = 5): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await queue.send(job);
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!isQueueRateLimitError(err) || attempt >= maxAttempts) {
+        throw err;
+      }
+      const delayMs = Math.min(2000, 100 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 100);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("enqueue_failed_unknown");
+}
+
 function requireObjectKey(url: URL): string | null {
   const key = (url.searchParams.get("object_key") ?? "").trim();
   if (!key || key.includes("..")) return null;
@@ -236,7 +263,7 @@ export default {
       };
 
       try {
-        await env.HPC_QUEUE.send(job);
+        await enqueueWithRetry(env.HPC_QUEUE, job);
       } catch (err) {
         return jsonResponse({ error: "enqueue_failed", detail: String(err) }, 500);
       }

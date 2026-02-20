@@ -322,29 +322,42 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
         },
     )
 
-    try:
-        with request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        print(json.dumps(body, indent=2))
-        job_id = str(body.get("job_id", "")).strip()
-        if not job_id:
-            raise RuntimeError("submit succeeded but missing job_id")
-        if not wait:
-            LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-            json_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
-            stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
-            stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
-            print(f"job queued: {job_id}")
-            print(f"local_results_dir: {LOCAL_RESULTS_DIR.resolve()}")
-            print(f"result_json: {json_path}")
-            print(f"result_stdout: {stdout_path}")
-            print(f"result_stderr: {stderr_path}")
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            print(json.dumps(body, indent=2))
+            job_id = str(body.get("job_id", "")).strip()
+            if not job_id:
+                raise RuntimeError("submit succeeded but missing job_id")
+            if not wait:
+                LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+                json_path = LOCAL_RESULTS_DIR / f"{job_id}.json"
+                stdout_path = LOCAL_RESULTS_DIR / f"{job_id}.stdout.log"
+                stderr_path = LOCAL_RESULTS_DIR / f"{job_id}.stderr.log"
+                print(f"job queued: {job_id}")
+                print(f"local_results_dir: {LOCAL_RESULTS_DIR.resolve()}")
+                print(f"result_json: {json_path}")
+                print(f"result_stdout: {stdout_path}")
+                print(f"result_stderr: {stderr_path}")
+                return job_id
+            wait_for_local_result_file(job_id=job_id)
             return job_id
-        wait_for_local_result_file(job_id=job_id)
-        return job_id
-    except error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            transient = exc.code in (429, 500, 502, 503, 504) and (
+                "Too Many Requests" in detail or '"enqueue_failed"' in detail
+            )
+            if transient and attempt < max_attempts:
+                delay_seconds = min(2.0, 0.2 * (2 ** (attempt - 1)))
+                print(
+                    f"submit transient error (attempt {attempt}/{max_attempts}): "
+                    f"HTTP {exc.code}; retrying in {delay_seconds:.1f}s..."
+                )
+                time.sleep(delay_seconds)
+                continue
+            raise RuntimeError(f"submit failed: HTTP {exc.code}: {detail}") from exc
 
 
 def cmd_submit(raw_parts: list[str], wait: bool, exec_mode: str = "container") -> None:
