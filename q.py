@@ -298,7 +298,7 @@ def ensure_local_watcher_running() -> None:
         )
 
 
-def submit_payload(payload: dict[str, Any], wait: bool) -> str:
+def submit_payload(payload: dict[str, Any], wait: bool, max_attempts: int = 20) -> str:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
     ensure_local_watcher_running()
@@ -322,7 +322,7 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
         },
     )
 
-    max_attempts = 20
+    max_attempts = max(1, int(max_attempts))
     for attempt in range(1, max_attempts + 1):
         try:
             with request.urlopen(req, timeout=30) as resp:
@@ -830,7 +830,7 @@ def cmd_update(wait: bool) -> None:
         }
     }
     try:
-        job_id = submit_payload(payload=payload, wait=wait)
+        job_id = submit_payload(payload=payload, wait=wait, max_attempts=3)
         print(f"hpc_update_job_id: {job_id}")
         print("note: hpc worker will drain in-flight jobs, then restart with new code")
     except RuntimeError as exc:
