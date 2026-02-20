@@ -27,6 +27,7 @@ DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_PULL_BATCH_SIZE = 100
 DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_MAX_IDLE_POLL_SECONDS = 30.0
 DEFAULT_RETRY_DELAY_SECONDS = 30
 DEFAULT_MAX_RETRY_ATTEMPTS = 5
 DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 600.0
@@ -606,7 +607,8 @@ def process_once(
     completed_outcomes: list[dict[str, Any]],
     completed_lock: threading.Lock,
     allow_pull: bool = True,
-) -> None:
+) -> bool:
+    had_activity = False
     done: list[threading.Thread] = [thread for thread in list(inflight.keys()) if not thread.is_alive()]
     if done:
         for thread in done:
@@ -618,9 +620,10 @@ def process_once(
         completed_outcomes.clear()
     if outcomes_to_ack:
         ack_retry_outcomes(config, outcomes_to_ack)
+        had_activity = True
 
     if not allow_pull:
-        return
+        return had_activity
 
     pull_resp = cf_post(
         url=f"{config.jobs_api_base}/pull",
@@ -638,7 +641,7 @@ def process_once(
     else:
         messages = []
     if not messages:
-        return
+        return had_activity
 
     for message in messages:
         thread = threading.Thread(
@@ -649,6 +652,7 @@ def process_once(
         )
         inflight[thread] = True
         thread.start()
+    return True
 
 
 def main() -> None:
@@ -680,13 +684,14 @@ def main() -> None:
     completed_outcomes: list[dict[str, Any]] = []
     completed_lock = threading.Lock()
     drain_mode = False
+    idle_streak = 0
     while True:
         try:
             if not drain_mode and RELOAD_REQUEST_PATH.exists():
                 drain_mode = True
                 print("reload requested; entering drain mode (no new pulls)")
 
-            process_once(
+            had_activity = process_once(
                 config,
                 inflight,
                 results_dir,
@@ -699,9 +704,17 @@ def main() -> None:
                 RELOAD_REQUEST_PATH.unlink(missing_ok=True)
                 print("drain complete; exiting for supervisor restart")
                 return
+            if had_activity or inflight:
+                idle_streak = 0
+            else:
+                idle_streak = min(idle_streak + 1, 8)
         except Exception as exc:
             print(f"poll loop error: {exc}")
-        time.sleep(config.poll_interval_seconds)
+        sleep_seconds = min(
+            DEFAULT_MAX_IDLE_POLL_SECONDS,
+            config.poll_interval_seconds * (2 ** idle_streak),
+        )
+        time.sleep(max(1.0, sleep_seconds))
 
 
 if __name__ == "__main__":

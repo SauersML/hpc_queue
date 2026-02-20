@@ -21,6 +21,7 @@ DEFAULT_CF_RESULTS_QUEUE_ID = "a435ae20f7514ce4b193879704b03e4e"
 DEFAULT_RESULTS_BATCH_SIZE = 10
 DEFAULT_RESULTS_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_RESULTS_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_IDLE_EXIT_SECONDS = 600.0
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 RESULTS_CACHE_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "results_cache.jsonl"
 HPC_STATUS_PATH = Path(__file__).resolve().parent.parent / "local-consumer" / "hpc_status.json"
@@ -127,7 +128,7 @@ def decode_body(body: Any, content_type: str) -> Any:
             return body
 
 
-def process_once(config: Config) -> None:
+def process_once(config: Config) -> bool:
     pulled = cf_post(
         url=f"{config.results_api_base}/pull",
         token=config.api_token,
@@ -139,7 +140,7 @@ def process_once(config: Config) -> None:
 
     messages = parse_messages(pulled)
     if not messages:
-        return
+        return False
 
     acks: list[dict[str, str]] = []
     RESULTS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -190,11 +191,18 @@ def process_once(config: Config) -> None:
             token=config.api_token,
             payload={"acks": acks, "retries": []},
         )
+    return True
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pull local result events from queue")
     parser.add_argument("--loop", action="store_true", help="run continuously in background")
+    parser.add_argument(
+        "--idle-exit-seconds",
+        type=float,
+        default=DEFAULT_IDLE_EXIT_SECONDS,
+        help="exit loop mode after this many idle seconds with no messages (0 disables)",
+    )
     args = parser.parse_args()
 
     load_dotenv(ENV_PATH)
@@ -207,9 +215,16 @@ def main() -> None:
             raise
         return
 
+    idle_exit_seconds = max(0.0, float(args.idle_exit_seconds))
+    last_activity = time.monotonic()
     while True:
         try:
-            process_once(config)
+            had_messages = process_once(config)
+            if had_messages:
+                last_activity = time.monotonic()
+            elif idle_exit_seconds > 0 and (time.monotonic() - last_activity) >= idle_exit_seconds:
+                print(f"results watcher idle for {idle_exit_seconds:.0f}s; exiting")
+                return
         except Exception as exc:
             print(f"results loop error: {exc}")
         time.sleep(config.poll_interval_seconds)

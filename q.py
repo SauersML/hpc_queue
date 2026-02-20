@@ -282,7 +282,14 @@ def ensure_local_watcher_running() -> None:
     env.setdefault("PYTHONUNBUFFERED", "1")
     with LOCAL_WATCHER_LOG_FILE.open("a", encoding="utf-8") as log_fp:
         proc = subprocess.Popen(
-            [sys.executable, "-u", str(ROOT / "local-consumer" / "local_pull_results.py"), "--loop"],
+            [
+                sys.executable,
+                "-u",
+                str(ROOT / "local-consumer" / "local_pull_results.py"),
+                "--loop",
+                "--idle-exit-seconds",
+                "600",
+            ],
             cwd=str(ROOT),
             stdout=log_fp,
             stderr=subprocess.STDOUT,
@@ -301,7 +308,8 @@ def ensure_local_watcher_running() -> None:
 def submit_payload(payload: dict[str, Any], wait: bool, max_attempts: int = 20) -> str:
     api_key = require_env("API_KEY")
     require_env("CF_QUEUES_API_TOKEN")
-    ensure_local_watcher_running()
+    if wait:
+        ensure_local_watcher_running()
     worker_url = DEFAULT_WORKER_URL.rstrip("/")
 
     req = request.Request(
