@@ -54,7 +54,7 @@ class Config:
     poll_interval_seconds: float = 2.0
     retry_delay_seconds: int = 30
     max_retry_attempts: int = 5
-    heartbeat_interval_seconds: float = 30.0
+    heartbeat_interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL_SECONDS
     results_dir: str = "results"
     apptainer_image: str = ""
     apptainer_bin: str = "apptainer"
@@ -97,10 +97,7 @@ def load_config() -> Config:
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
         max_retry_attempts=DEFAULT_MAX_RETRY_ATTEMPTS,
-        heartbeat_interval_seconds=optional_float(
-            "HEARTBEAT_INTERVAL_SECONDS",
-            DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
-        ),
+        heartbeat_interval_seconds=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
         results_dir=DEFAULT_RESULTS_DIR,
         apptainer_image=DEFAULT_APPTAINER_IMAGE,
         apptainer_bin=DEFAULT_APPTAINER_BIN,
@@ -709,11 +706,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    def optional_float(name: str, default: float) -> float:
-        raw = os.getenv(name)
-        if raw is None or raw.strip() == "":
-            return default
-        try:
-            return float(raw)
-        except ValueError:
-            return default
