@@ -224,6 +224,10 @@ export default {
         return jsonResponse({ error: "invalid_json" }, 400);
       }
 
+      if (!env.HPC_QUEUE || typeof env.HPC_QUEUE.send !== "function") {
+        return jsonResponse({ error: "queue_binding_missing", detail: "HPC_QUEUE is not configured" }, 500);
+      }
+
       const job: JobMessage = {
         job_id: shortJobId(),
         input: payload.input ?? {},
@@ -231,7 +235,11 @@ export default {
         metadata: payload.metadata,
       };
 
-      await env.HPC_QUEUE.send(job);
+      try {
+        await env.HPC_QUEUE.send(job);
+      } catch (err) {
+        return jsonResponse({ error: "enqueue_failed", detail: String(err) }, 500);
+      }
 
       return jsonResponse(
         {
