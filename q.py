@@ -322,7 +322,7 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
         },
     )
 
-    max_attempts = 5
+    max_attempts = 20
     for attempt in range(1, max_attempts + 1):
         try:
             with request.urlopen(req, timeout=30) as resp:
@@ -346,11 +346,24 @@ def submit_payload(payload: dict[str, Any], wait: bool) -> str:
             return job_id
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            retry_after_header = ""
+            if exc.headers:
+                retry_after_header = (exc.headers.get("retry-after", "") or "").strip()
+            retry_after_seconds = 0.0
+            if retry_after_header:
+                try:
+                    retry_after_seconds = max(0.0, float(retry_after_header))
+                except ValueError:
+                    retry_after_seconds = 0.0
+
             transient = exc.code in (429, 500, 502, 503, 504) and (
-                "Too Many Requests" in detail or '"enqueue_failed"' in detail
+                "Too Many Requests" in detail
+                or '"enqueue_failed"' in detail
+                or '"enqueue_rate_limited"' in detail
             )
             if transient and attempt < max_attempts:
-                delay_seconds = min(2.0, 0.2 * (2 ** (attempt - 1)))
+                exponential = min(30.0, 0.5 * (2 ** (attempt - 1)))
+                delay_seconds = min(30.0, max(retry_after_seconds, exponential))
                 print(
                     f"submit transient error (attempt {attempt}/{max_attempts}): "
                     f"HTTP {exc.code}; retrying in {delay_seconds:.1f}s..."

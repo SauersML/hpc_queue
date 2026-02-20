@@ -265,6 +265,15 @@ export default {
       try {
         await enqueueWithRetry(env.HPC_QUEUE, job);
       } catch (err) {
+        if (isQueueRateLimitError(err)) {
+          return new Response(JSON.stringify({ error: "enqueue_rate_limited", detail: String(err) }), {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "retry-after": "2",
+            },
+          });
+        }
         return jsonResponse({ error: "enqueue_failed", detail: String(err) }, 500);
       }
 
