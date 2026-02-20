@@ -829,9 +829,26 @@ def cmd_update(wait: bool) -> None:
             "exec_mode": "host",
         }
     }
-    job_id = submit_payload(payload=payload, wait=wait)
-    print(f"hpc_update_job_id: {job_id}")
-    print("note: hpc worker will drain in-flight jobs, then restart with new code")
+    try:
+        job_id = submit_payload(payload=payload, wait=wait)
+        print(f"hpc_update_job_id: {job_id}")
+        print("note: hpc worker will drain in-flight jobs, then restart with new code")
+    except RuntimeError as exc:
+        msg = str(exc)
+        if (
+            "enqueue_rate_limited" in msg
+            or "Too Many Requests" in msg
+            or "daily write operations limit" in msg
+        ):
+            # Queue write quota can be exhausted on free tier; still perform local graceful reload signal.
+            reload_path = ROOT / "hpc-consumer" / "reload_requested"
+            reload_path.parent.mkdir(parents=True, exist_ok=True)
+            reload_path.touch()
+            print("queue write rate-limited; applied local graceful reload fallback")
+            print(f"reload_signal: {reload_path}")
+            print("note: this host install is updated; worker will reload on next poll cycle")
+            return
+        raise
 
 
 def _read_local_result(job_id: str) -> dict[str, Any]:
