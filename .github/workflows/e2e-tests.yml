@@ -108,6 +108,7 @@ jobs:
   cloudflare-e2e:
     name: Cloudflare Queue E2E
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.QUEUE_TOKEN || secrets.HPC_QUEUE_KEY }}
       API_KEY: ${{ secrets.API_KEY }}

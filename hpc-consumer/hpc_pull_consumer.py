@@ -29,7 +29,7 @@ DEFAULT_VISIBILITY_TIMEOUT_MS = 120000
 DEFAULT_POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_RETRY_DELAY_SECONDS = 30
 DEFAULT_MAX_RETRY_ATTEMPTS = 5
-DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30.0
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 600.0
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_RESULTS_DIR = "results"
 DEFAULT_APPTAINER_IMAGE = str(ROOT_DIR / "runtime" / "hpc-queue-runtime.sif")
@@ -97,7 +97,10 @@ def load_config() -> Config:
         poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         retry_delay_seconds=DEFAULT_RETRY_DELAY_SECONDS,
         max_retry_attempts=DEFAULT_MAX_RETRY_ATTEMPTS,
-        heartbeat_interval_seconds=DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        heartbeat_interval_seconds=optional_float(
+            "HEARTBEAT_INTERVAL_SECONDS",
+            DEFAULT_HEARTBEAT_INTERVAL_SECONDS,
+        ),
         results_dir=DEFAULT_RESULTS_DIR,
         apptainer_image=DEFAULT_APPTAINER_IMAGE,
         apptainer_bin=DEFAULT_APPTAINER_BIN,
@@ -706,3 +709,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    def optional_float(name: str, default: float) -> float:
+        raw = os.getenv(name)
+        if raw is None or raw.strip() == "":
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            return default

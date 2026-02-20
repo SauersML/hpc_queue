@@ -52,6 +52,21 @@ async function enqueueWithRetry(queue: Queue, job: JobMessage, maxAttempts = 5):
   throw lastError instanceof Error ? lastError : new Error("enqueue_failed_unknown");
 }
 
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    const out: Record<string, unknown> = {
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+    };
+    const maybe = err as Error & { cause?: unknown; code?: unknown };
+    if (maybe.cause !== undefined) out.cause = String(maybe.cause);
+    if (maybe.code !== undefined) out.code = String(maybe.code);
+    return out;
+  }
+  return { value: String(err) };
+}
+
 function requireObjectKey(url: URL): string | null {
   const key = (url.searchParams.get("object_key") ?? "").trim();
   if (!key || key.includes("..")) return null;
@@ -265,6 +280,7 @@ export default {
       try {
         await enqueueWithRetry(env.HPC_QUEUE, job);
       } catch (err) {
+        console.error("enqueue_failed", JSON.stringify(serializeError(err)));
         if (isQueueRateLimitError(err)) {
           return new Response(JSON.stringify({ error: "enqueue_rate_limited", detail: String(err) }), {
             status: 429,
